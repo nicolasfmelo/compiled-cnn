@@ -17,6 +17,7 @@ if(NOT EXISTS "${CUDA_WHEEL}/lib/libcudart.so.12")
     message(FATAL_ERROR "The pinned CUDA 12 wheel runtime is required")
 endif()
 add_executable(yolo_aoti main.cpp)
+target_include_directories(yolo_aoti PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../native")
 target_include_directories(yolo_aoti SYSTEM PRIVATE
     "${TORCH_WHEEL_ROOT}/include"
     "${TORCH_WHEEL_ROOT}/include/torch/csrc/api/include"
