@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run from any directory. Keep default builder optimization/TF32 policy.
+# Run from any directory. Keep default optimization; compare default FP32 with --noTF32.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p artifacts/trt
@@ -27,19 +27,27 @@ CPP
 artifacts/trt/builder_defaults | tee artifacts/trt/builder_defaults.log
 default_tf32=$(awk '{sub("tf32=", "", $1); print $1}' artifacts/trt/builder_defaults.log)
 [[ "$default_tf32" == on || "$default_tf32" == off ]]
-for precision in fp32 fp16; do
-    plan="artifacts/yolov10s_${precision}.plan"
-    log="artifacts/trt/build_${precision}.log"
+for variant in fp32 fp16 fp32_notf32; do
+    precision=${variant%_notf32}
+    stem="yolov10s_${variant}"
+    plan="artifacts/${stem}.plan"
+    prefix="artifacts/trt/build_${stem}"
+    log="${prefix}.log"
+    flags=()
+    if [[ "$variant" == fp32_notf32 ]]; then flags+=(--noTF32); fi
     # Do not leave stale metadata/a plan looking successful after a failed build.
-    rm -f "$plan" "artifacts/trt/build_${precision}.seconds" "artifacts/trt/build_${precision}.tf32"
+    rm -f "$plan" "${prefix}.seconds" "${prefix}.tf32"
     start=$(date +%s.%N)
     trtexec --onnx="artifacts/yolov10s_${precision}.onnx" --saveEngine="$plan" \
-        --stronglyTyped --skipInference 2>&1 | tee "$log"
+        --stronglyTyped --skipInference "${flags[@]}" 2>&1 | tee "$log"
     finish=$(date +%s.%N)
     seconds=$(awk -v start="$start" -v finish="$finish" 'BEGIN {printf "%.6f", finish-start}')
-    printf '%s\n' "$seconds" > "artifacts/trt/build_${precision}.seconds"
+    printf '%s\n' "$seconds" > "${prefix}.seconds"
     # The log records builder precision policy, not proof every FP32 layer uses TF32.
-    if [[ "$precision" == fp16 ]]; then
+    if [[ "$variant" == fp32_notf32 ]]; then
+        tf32=off
+        printf 'TF32 explicitly disabled: --noTF32\n' | tee -a "$log"
+    elif [[ "$precision" == fp16 ]]; then
         tf32=n/a
     elif grep -Eq 'Precision:.*TF32' "$log"; then
         tf32=on
@@ -52,8 +60,8 @@ for precision in fp32 fp16; do
         echo "Cannot determine TF32 policy from $log" >&2
         exit 1
     fi
-    printf '%s\n' "$tf32" > "artifacts/trt/build_${precision}.tf32"
+    printf '%s\n' "$tf32" > "${prefix}.tf32"
     bytes=$(stat -c %s "$plan")
-    awk -v p="$precision" -v s="$seconds" -v b="$bytes" -v tf32="$tf32" \
+    awk -v p="$variant" -v s="$seconds" -v b="$bytes" -v tf32="$tf32" \
         'BEGIN {printf "%s: build %.3f s | plan %.3f MiB | tf32: %s\n", p,s,b/1048576,tf32}'
 done

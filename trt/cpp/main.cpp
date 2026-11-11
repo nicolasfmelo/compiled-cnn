@@ -124,8 +124,7 @@ public:
 };
 
 void print_engine(const Runner& runner, const fs::path& plan) {
-    std::string precision = runner.half ? "fp16" : "fp32";
-    auto prefix = plan.parent_path() / ("trt/build_" + precision);
+    auto prefix = plan.parent_path() / ("trt/build_" + plan.stem().string());
     std::ifstream seconds(prefix.string() + ".seconds"), tf32_file(prefix.string() + ".tf32");
     double build_s;
     std::string tf32;
@@ -145,7 +144,8 @@ void bench(Runner& runner, double load_ms, const fs::path& plan) {
     std::vector<double> times;
     times.reserve(500);
     for (int i = 0; i < 500; ++i) times.push_back(runner.iteration());
-    std::cout << "variant: trt-cpp " << (runner.half ? "fp16" : "fp32") << '\n'
+    std::cout << "variant: trt-cpp " << (runner.half ? "fp16" : "fp32")
+              << (plan.stem() == "yolov10s_fp32_notf32" ? " notf32" : "") << '\n'
               << "settings: strongly_typed=on builder_optimization=default cudnn_benchmark=n/a\n";
     print_bench(std::move(times), load_ms, first);
     print_engine(runner, plan);
