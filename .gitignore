@@ -4,3 +4,5 @@ __pycache__/
 *.engine
 *.onnx
 runs/
+artifacts/
+aoti/cpp/build/

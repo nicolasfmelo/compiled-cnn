@@ -8,6 +8,7 @@ dependencies = [
     "torchvision",
     "opencv-python",
     "nvidia-ml-py",
+    "nvidia-cuda-cccl-cu12==12.8.90",
 ]
 
 [[tool.uv.index]]
