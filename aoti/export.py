@@ -123,7 +123,10 @@ def collect_images(capture_webcam):
                           f"{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
                           f"{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))} MJPG requested")
             except (RuntimeError, cv2.error) as exc:
-                status = f"capture failed ({exc}); continuing with {captured} frames"
+                # A partial capture is not the requested six-frame sample set.
+                for partial in data.glob("webcam_*.jpg"):
+                    partial.unlink()
+                status = f"capture failed ({exc}); continuing with the 2 asset images"
             finally:
                 cap.release()
     print(f"webcam: {status}", flush=True)
