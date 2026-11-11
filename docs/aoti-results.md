@@ -21,9 +21,11 @@ referência; o consumidor de inferência é um processo C++ sem Python.
 | CMake / Ninja | 4.4.3 / 1.13.2 |
 | Toolkit do sistema | CUDA 13.4 em `/opt/cuda`, **não usado no build final** |
 
-TF32 foi desabilitado explicitamente no eager e na exportação
-(`cuda.matmul.allow_tf32=False`, `cudnn.allow_tf32=False`). Não é um comparativo
-contra FP32 com TF32 habilitado. Não foi instalado pacote de sistema.
+Nos benchmarks, ambos os consumidores configuram explicitamente os padrões do
+PyTorch: **TF32 do cuDNN ligado, TF32 de matmul desligado**. Há variantes com
+`cudnn.benchmark=False` e `True`, sempre alinhadas entre Python e C++.
+A exportação e a geração de referência continuam estritas, com ambos os TF32
+desligados. Não foi instalado pacote de sistema.
 
 ## Compatibilidades e decisões de implementação
 
@@ -182,8 +184,32 @@ Protocolo idêntico: entrada `bus.input.bin` já na GPU, só forward, primeira
 execução separada, 50 aquecimentos e 500 iterações medidas, sincronização CUDA
 antes do cronômetro e depois do forward, relógio de parede (`perf_counter` /
 `steady_clock`). Percentis com interpolação linear. Throughput é `1000 / média`,
-não FPS de um pipeline de câmera. Cada variante roda em processo separado para
-não contaminar o pico de RSS ou a memória NVML com a outra precisão.
+não FPS de um pipeline de câmera. Cada uma das oito variantes roda em processo
+separado para não contaminar o pico de RSS, o cache de autotuning ou a memória
+NVML com outra variante. A ordem foi eager/AOTI FP32 sem autotuning, eager/AOTI
+FP32 com autotuning, eager/AOTI FP16 sem autotuning e eager/AOTI FP16 com autotuning,
+sem rodar outras medições entre esses oito processos.
+
+**Correção da primeira rodada:** o eager herdava `cudnn.allow_tf32=False` do
+exportador, enquanto o runner C++ deixava TF32 do cuDNN ligado por padrão.
+Isso inflava o ganho FP32 publicado anteriormente. Os números abaixo substituem
+os anteriores: Python agora define `cudnn.allow_tf32=True`,
+`cuda.matmul.allow_tf32=False` e o valor de `cudnn.benchmark`; C++ usa
+`at::globalContext().setAllowTF32CuDNN(true)`, `setAllowTF32CuBLAS(false)`
+e `setBenchmarkCuDNN(...)`. Cada bloco imprime os valores efetivos. O exportador
+não foi alterado e a validação contra suas referências estritas foi repetida:
+**8 PASS / 0 FAIL em FP32 e 8 PASS / 0 FAIL em FP16**, com os mesmos valores
+por amostra apresentados acima.
+
+O resultado anterior de aproximadamente 7 ms no script de webcam com
+Ultralytics `predict` usava letterbox retangular com entrada 640×384, enquanto
+este benchmark usa sempre 640×640.
+
+**AOTI chama cuDNN, não é um grafo com todas as convoluções em Triton.** A inspeção
+de cada wrapper encontrou 86 chamadas `aoti_torch_cuda_convolution`; um perfil
+diagnóstico separado, fora das medições, registrou `aten::cudnn_convolution`
+84 vezes por forward FP32 e 86 por forward FP16. Ativar o autotuning no AOTI
+reduziu a média de 8,33 para 8,10 ms em FP32 e de 3,81 para 3,51 ms em FP16.
 
 A carga eager inclui checkpoint, seleção da cabeça, fusão e transferência para
 CUDA/precisão solicitada. A carga AOTI inclui extração e carga do pacote. Importação
@@ -195,45 +221,80 @@ somente dos pesos. Memória NVML é uma leitura após o benchmark, não seu pico
 
 | Variante | Média (ms) | p50 (ms) | p95 (ms) | it/s | GPU processo (MiB) | RSS pico (MiB) | Carga (ms) | Primeiro forward (ms) |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| eager-py fp32 | 10,65 | 10,64 | 10,74 | 93,9 | 244,0 | 1311,2 | 78,18 | 333,28 |
-| eager-py fp16 | 5,45 | 5,44 | 5,51 | 183,5 | 232,0 | 1750,7 | 55,15 | 1659,72 |
-| aoti-cpp fp32 | 8,27 | 8,28 | 8,32 | 120,9 | 204,0 | 1053,2 | 28,45 | 1595,63 |
-| aoti-cpp fp16 | 3,81 | 3,80 | 3,89 | 262,2 | 174,0 | 1219,5 | 18,57 | 1908,83 |
+| eager-py fp32 | 9,75 | 9,74 | 9,82 | 102,6 | 244,0 | 1329,6 | 55,87 | 280,53 |
+| aoti-cpp fp32 | 8,33 | 8,33 | 8,35 | 120,1 | 204,0 | 1051,1 | 15,80 | 1570,62 |
+| eager-py fp32 cudnn-bench | 9,21 | 9,21 | 9,29 | 108,5 | 250,0 | 1478,6 | 58,98 | 15318,63 |
+| aoti-cpp fp32 cudnn-bench | 8,10 | 8,10 | 8,15 | 123,4 | 198,0 | 1329,0 | 15,86 | 18530,63 |
+| eager-py fp16 | 5,45 | 5,44 | 5,50 | 183,6 | 232,0 | 1752,5 | 62,66 | 1645,43 |
+| aoti-cpp fp16 | 3,81 | 3,80 | 3,88 | 262,3 | 174,0 | 1217,5 | 17,99 | 1931,68 |
+| eager-py fp16 cudnn-bench | 5,22 | 5,22 | 5,28 | 191,4 | 234,0 | 1941,1 | 53,49 | 13906,42 |
+| aoti-cpp fp16 cudnn-bench | 3,51 | 3,50 | 3,57 | 284,9 | 176,0 | 1632,0 | 9,79 | 11350,84 |
 
-Saída literal das quatro variantes:
+Saída literal das oito variantes, na ordem da execução:
 
 ```text
 variant: eager-py fp32
-latency ms: mean 10.65 | p50 10.64 | p95 10.74
-throughput: 93.9 it/s
+settings: cudnn_tf32=on matmul_tf32=off cudnn_benchmark=off
+latency ms: mean 9.75 | p50 9.74 | p95 9.82
+throughput: 102.6 it/s
 process GPU MiB (NVML): 244.0
-peak RSS MiB: 1311.2
-load ms: 78.18 | first run ms: 333.28
-variant: eager-py fp16
-latency ms: mean 5.45 | p50 5.44 | p95 5.51
-throughput: 183.5 it/s
-process GPU MiB (NVML): 232.0
-peak RSS MiB: 1750.7
-load ms: 55.15 | first run ms: 1659.72
+peak RSS MiB: 1329.6
+load ms: 55.87 | first run ms: 280.53
 variant: aoti-cpp fp32
-latency ms: mean 8.27 | p50 8.28 | p95 8.32
-throughput: 120.9 it/s
+settings: cudnn_tf32=on matmul_tf32=off cudnn_benchmark=off
+latency ms: mean 8.33 | p50 8.33 | p95 8.35
+throughput: 120.1 it/s
 process GPU MiB (NVML): 204.0
-peak RSS MiB: 1053.2
-load ms: 28.45 | first run ms: 1595.63
+peak RSS MiB: 1051.1
+load ms: 15.80 | first run ms: 1570.62
+variant: eager-py fp32 cudnn-bench
+settings: cudnn_tf32=on matmul_tf32=off cudnn_benchmark=on
+latency ms: mean 9.21 | p50 9.21 | p95 9.29
+throughput: 108.5 it/s
+process GPU MiB (NVML): 250.0
+peak RSS MiB: 1478.6
+load ms: 58.98 | first run ms: 15318.63
+variant: aoti-cpp fp32 cudnn-bench
+settings: cudnn_tf32=on matmul_tf32=off cudnn_benchmark=on
+latency ms: mean 8.10 | p50 8.10 | p95 8.15
+throughput: 123.4 it/s
+process GPU MiB (NVML): 198.0
+peak RSS MiB: 1329.0
+load ms: 15.86 | first run ms: 18530.63
+variant: eager-py fp16
+settings: cudnn_tf32=on matmul_tf32=off cudnn_benchmark=off
+latency ms: mean 5.45 | p50 5.44 | p95 5.50
+throughput: 183.6 it/s
+process GPU MiB (NVML): 232.0
+peak RSS MiB: 1752.5
+load ms: 62.66 | first run ms: 1645.43
 variant: aoti-cpp fp16
-latency ms: mean 3.81 | p50 3.80 | p95 3.89
-throughput: 262.2 it/s
+settings: cudnn_tf32=on matmul_tf32=off cudnn_benchmark=off
+latency ms: mean 3.81 | p50 3.80 | p95 3.88
+throughput: 262.3 it/s
 process GPU MiB (NVML): 174.0
-peak RSS MiB: 1219.5
-load ms: 18.57 | first run ms: 1908.83
+peak RSS MiB: 1217.5
+load ms: 17.99 | first run ms: 1931.68
+variant: eager-py fp16 cudnn-bench
+settings: cudnn_tf32=on matmul_tf32=off cudnn_benchmark=on
+latency ms: mean 5.22 | p50 5.22 | p95 5.28
+throughput: 191.4 it/s
+process GPU MiB (NVML): 234.0
+peak RSS MiB: 1941.1
+load ms: 53.49 | first run ms: 13906.42
+variant: aoti-cpp fp16 cudnn-bench
+settings: cudnn_tf32=on matmul_tf32=off cudnn_benchmark=on
+latency ms: mean 3.51 | p50 3.50 | p95 3.57
+throughput: 284.9 it/s
+process GPU MiB (NVML): 176.0
+peak RSS MiB: 1632.0
+load ms: 9.79 | first run ms: 11350.84
 ```
 
-Não havia outro processo CUDA de computação na inspeção inicial; o desktop
-GNOME continuava ativo. Não foram travados clocks ou potência. A GPU estava em
-39 °C no início; uma leitura posterior mostrou 43 °C, SM 1732 MHz/memória
-7001 MHz, e outra já ociosa mostrou 42 °C, SM 210 MHz/memória 405 MHz.
-Não são amostras contínuas durante cada iteração. A alimentação pela tomada
+Não havia outro processo CUDA de computação antes desses oito benchmarks; o
+desktop GNOME continuava ativo. Não foram travados clocks ou potência. A GPU
+estava em 39 °C, SM 210 MHz e 3,94 W antes da sequência, e em 58 °C,
+SM 1965 MHz e 84,60 W logo depois. Não são amostras contínuas durante cada iteração. A alimentação pela tomada
 não foi confirmada independentemente pelo software; temperatura, perfil de
 energia, boost e compartilhamento térmico CPU/GPU de notebook limitam a
 comparabilidade. Estes números são uma rodada sequencial, não um estudo com
@@ -271,7 +332,6 @@ Executar na raiz do projeto, na mesma máquina, com GPU disponível:
 ```bash
 uv sync
 uv run python aoti/export.py --capture-webcam
-uv run python aoti/bench_eager.py
 cmake -S aoti/cpp -B aoti/cpp/build -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH="$(uv run python -c 'import torch;print(torch.utils.cmake_prefix_path)')"
@@ -280,8 +340,16 @@ cmake --build aoti/cpp/build
 for precision in fp32 fp16; do
   env -u LD_LIBRARY_PATH aoti/cpp/build/yolo_aoti validate \
     "artifacts/yolov10s_${precision}.pt2" artifacts/ref
-  env -u LD_LIBRARY_PATH aoti/cpp/build/yolo_aoti bench \
-    "artifacts/yolov10s_${precision}.pt2"
+done
+# Oito processos, alternando eager/AOTI para distribuir a deriva térmica.
+for precision in fp32 fp16; do
+  for tuning in off on; do
+    flags=()
+    if [ "$tuning" = on ]; then flags+=(--cudnn-benchmark); fi
+    uv run python aoti/bench_eager.py --precision "$precision" "${flags[@]}"
+    env -u LD_LIBRARY_PATH aoti/cpp/build/yolo_aoti bench \
+      "artifacts/yolov10s_${precision}.pt2" "${flags[@]}"
+  done
 done
 env -u LD_LIBRARY_PATH aoti/cpp/build/yolo_aoti detect \
   artifacts/yolov10s_fp32.pt2 artifacts/data/bus.jpg \
@@ -326,16 +394,23 @@ git diff --check
 
 ## Conclusão
 
-A inferência nativa sem Python foi demonstrada, com **16/16 validações PASS** e
-ambos os checks de imagem aprovados. Nesta rodada, AOTI reduziu a latência média
-em **22,3% no FP32 (1,29×)** e **30,1% no FP16 (1,43×)** em relação ao eager da
-mesma precisão. O FP16 compilado foi a variante mais rápida: **3,81 ms / 262,2 it/s**.
-Também houve redução da memória de GPU do processo (40 MiB em FP32, 58 MiB em
-FP16) e do pico de RSS.
+A inferência nativa sem Python foi demonstrada, com **16/16 validações PASS**
+novamente contra a referência estrita; os checks de imagem da rodada anterior
+continuam registrados acima. Com TF32/cuDNN finalmente alinhados, sem autotuning,
+AOTI reduziu a latência média em **14,6% no FP32 (1,17×)** e **30,1% no FP16
+(1,43×)** em relação ao eager da mesma precisão. Portanto, o ganho FP32 é menor
+que os 22,3% divulgados na comparação anterior incorreta.
 
-O ganho é de regime estacionário, não uma promessa de menor latência a frio:
-o primeiro forward AOTI foi mais lento que o eager nos dois casos, especialmente
-em FP32. Os pacotes contêm os pesos, mas continuam dependendo de libtorch,
-bibliotecas CUDA e driver compatíveis. A rodada confirma a viabilidade e um
-ganho mensurável neste hardware; não avalia CPU, INT8, outros compiladores,
+Com autotuning habilitado nos dois lados, a redução foi de **12,1% no FP32
+(1,14×)** e **32,8% no FP16 (1,49×)**. A variante mais rápida foi AOTI FP16 com
+cuDNN benchmark: **3,51 ms / 284,9 it/s**. Sem autotuning, a memória de GPU do
+processo caiu 40 MiB em FP32 e 58 MiB em FP16; o pico de RSS também foi menor.
+
+O ganho é de regime estacionário, não uma promessa de inicialização rápida:
+ativar autotuning elevou o primeiro forward para aproximadamente **11–19 s**
+e aumentou o pico de RSS. Sem autotuning, o primeiro forward AOTI ainda foi
+mais lento que o eager nas duas precisões. Os pacotes contêm os pesos, mas
+continuam dependendo de libtorch, bibliotecas CUDA e driver compatíveis.
+A rodada corrigida confirma um ganho mensurável neste hardware, sujeito às
+limitações térmicas de notebook; não avalia CPU, INT8, outros compiladores,
 webcam em C++ ou acurácia ampla do modelo.

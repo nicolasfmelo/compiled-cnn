@@ -1,4 +1,5 @@
 #include <ATen/ATen.h>
+#include <ATen/Context.h>
 #include <c10/core/InferenceMode.h>
 #include <torch/csrc/inductor/aoti_package/model_package_loader.h>
 #include <cuda_runtime_api.h>
@@ -219,7 +220,12 @@ void bench(Loader& loader, bool half, double load_ms, const fs::path& package) {
     auto memory = gpu_memory();
     rusage usage{};
     if (getrusage(RUSAGE_SELF, &usage)) throw std::runtime_error("getrusage failed");
-    std::cout << "variant: aoti-cpp " << (half ? "fp16" : "fp32") << '\n'
+    const auto& context = at::globalContext();
+    std::cout << "variant: aoti-cpp " << (half ? "fp16" : "fp32")
+              << (context.benchmarkCuDNN() ? " cudnn-bench" : "") << '\n'
+              << "settings: cudnn_tf32=" << (context.allowTF32CuDNN() ? "on" : "off")
+              << " matmul_tf32=" << (context.allowTF32CuBLAS() ? "on" : "off")
+              << " cudnn_benchmark=" << (context.benchmarkCuDNN() ? "on" : "off") << '\n'
               << std::fixed << std::setprecision(2)
               << "latency ms: mean " << mean << " | p50 " << percentile(times, 0.5)
               << " | p95 " << percentile(times, 0.95) << '\n'
@@ -320,9 +326,10 @@ int detect(Loader& loader, bool half, const fs::path& image, const std::optional
 int main(int argc, char** argv) {
     try {
         if (argc < 3) throw std::runtime_error(
-            "usage: yolo_aoti validate PACKAGE REF_DIR | bench PACKAGE | detect PACKAGE IMAGE [--check DETS_TXT]");
+            "usage: yolo_aoti validate PACKAGE REF_DIR | bench PACKAGE [--cudnn-benchmark] | detect PACKAGE IMAGE [--check DETS_TXT]");
         std::string mode = argv[1];
-        if ((mode == "validate" && argc != 4) || (mode == "bench" && argc != 3) ||
+        if ((mode == "validate" && argc != 4) ||
+            (mode == "bench" && !(argc == 3 || (argc == 4 && std::string(argv[3]) == "--cudnn-benchmark"))) ||
             (mode == "detect" && !(argc == 4 || (argc == 6 && std::string(argv[4]) == "--check"))) ||
             (mode != "validate" && mode != "bench" && mode != "detect"))
             throw std::runtime_error("invalid mode/arguments");
@@ -335,6 +342,13 @@ int main(int argc, char** argv) {
         bool half = filename == "yolov10s_fp16.pt2";
         if (!half && filename != "yolov10s_fp32.pt2") throw std::runtime_error("expected yolov10s_fp32.pt2 or yolov10s_fp16.pt2");
         c10::InferenceMode guard;
+        if (mode == "bench") {
+            // Explicitly match the Python benchmark, independently of libtorch defaults.
+            auto& context = at::globalContext();
+            context.setAllowTF32CuDNN(true);
+            context.setAllowTF32CuBLAS(false);
+            context.setBenchmarkCuDNN(argc == 4);
+        }
         cuda_check(cudaSetDevice(0));
         cuda_check(cudaFree(nullptr)); // Initialize context outside package load timing.
         sync_cuda();
