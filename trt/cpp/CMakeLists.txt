@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.24)
+project(yolo_trt LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# No Torch, Python, nvcc, or CUDA language: this consumer only calls native APIs.
+find_path(TENSORRT_INCLUDE NvInfer.h REQUIRED)
+find_library(TENSORRT_LIBRARY nvinfer REQUIRED)
+find_path(CUDA_INCLUDE cuda_runtime_api.h PATHS /opt/cuda/include NO_DEFAULT_PATH REQUIRED)
+find_library(CUDA_RUNTIME cudart PATHS /opt/cuda/lib64 NO_DEFAULT_PATH REQUIRED)
+add_executable(yolo_trt main.cpp)
+target_include_directories(yolo_trt PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../native")
+target_include_directories(yolo_trt SYSTEM PRIVATE "${TENSORRT_INCLUDE}" "${CUDA_INCLUDE}")
+target_compile_options(yolo_trt PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(yolo_trt PRIVATE "${TENSORRT_LIBRARY}" "${CUDA_RUNTIME}" ${CMAKE_DL_LIBS})
+set_target_properties(yolo_trt PROPERTIES BUILD_RPATH /opt/cuda/lib64 INSTALL_RPATH /opt/cuda/lib64)
+message(STATUS "TensorRT: ${TENSORRT_LIBRARY}; system CUDA runtime: ${CUDA_RUNTIME}")

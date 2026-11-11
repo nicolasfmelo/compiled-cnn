@@ -6,3 +6,4 @@ __pycache__/
 runs/
 artifacts/
 aoti/cpp/build/
+trt/cpp/build/
