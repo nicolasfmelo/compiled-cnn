@@ -106,7 +106,11 @@ int main(int argc, char** argv) {
             }
             return validate(infer, false, args.extra);
         }
-        if (args.command == "detect") return detect(infer, false, args.extra, args.check);
+        if (args.command == "detect") {
+            if (args.precision == "int8")
+                std::cout << "precision: engine int8 (shared detect check retains legacy fp32 label; IoU >= 0.90)\n";
+            return detect(infer, false, args.extra, args.check);
+        }
         std::cout << "variant: engine " << args.precision << " impl=" << args.impl << " threads=" << args.threads << " cpus=" << args.cpus << '\n';
         auto input = read_binary("artifacts/ref/bus.input.bin", INPUT_SIZE);
         auto iteration = [&] { auto t = Clock::now(); infer(input); return milliseconds(t); };

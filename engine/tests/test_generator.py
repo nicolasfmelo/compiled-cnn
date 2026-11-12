@@ -174,6 +174,24 @@ class Int8GraphTests(unittest.TestCase):
             self.assertEqual(expected, {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                                         for p in destination.iterdir()})
 
+    def test_depthwise_stays_fp32(self):
+        nodes = [helper.make_node('Conv',['images','w'],['A'],name='dense',strides=[640,640]),
+                 helper.make_node('Conv',['A','dw'],['B'],name='depthwise',group=3)]
+        graph = helper.make_graph(nodes, 'depthwise',
+            [helper.make_tensor_value_info('images',onnx.TensorProto.FLOAT,[1,3,640,640])],
+            [helper.make_tensor_value_info('B',onnx.TensorProto.FLOAT,[1,3,1,1])],
+            [numpy_helper.from_array(np.ones((3,3,1,1),np.float32),'w'),
+             numpy_helper.from_array(np.ones((3,1,1,1),np.float32),'dw')])
+        model = helper.make_model(graph,opset_imports=[helper.make_opsetid('',18)],ir_version=10)
+        with tempfile.TemporaryDirectory(dir=ROOT/'artifacts/engine') as tmp:
+            tmp=Path(tmp)
+            onnx.save(model,tmp/'graph.onnx')
+            (tmp/'cal.json').write_text(json.dumps(dict(tensors=dict(images=dict(min=0.,max=1.)))))
+            generator.compile_graph(tmp/'graph.onnx',tmp/'generated',5,tmp/'cal.json')
+            code=(tmp/'generated/model.cpp').read_text()
+            self.assertEqual(code.count('if (ctx.int8)'),1)
+            self.assertNotIn('conv_int8',SyntheticGraphTests.call(code,'depthwise'))
+
     def test_int8_emission_fused_input_fallback_and_determinism(self):
         # B consumes SiLU's original ONNX tensor, not Conv A's alias root.
         nodes = [helper.make_node('Conv', ['images','w'], ['A'], name='first', strides=[640,640]),
@@ -206,6 +224,15 @@ class Int8GraphTests(unittest.TestCase):
                 packed = np.frombuffer((tmp/'one/weights.bin').read_bytes(),np.int8,24,offset).reshape(6,4)
                 np.testing.assert_array_equal(packed[:3],[[127,0,2,0],[0,0,0,0],[-127,0,-2,0]])
                 np.testing.assert_array_equal(packed[3:],0)
+                params = re.search(r'engine_weights \+ (\d+), engine_weights \+ (\d+), ([0-9.e+-]+)f, (\d+)\}',code)
+                blob=(tmp/'one/weights.bin').read_bytes()
+                products=np.frombuffer(blob,'<f4',3,int(params[1])*4)
+                correction=np.frombuffer(blob,'<f4',3,int(params[2])*4)
+                scale=np.float32(params[3]); zp=int(params[4])
+                # All channels have scale_w == 1, including the guarded zero channel.
+                np.testing.assert_array_equal(products,[scale]*3)
+                expected=(-products.astype(np.float64)*zp*packed[:3].astype(np.int64).sum(axis=1)).astype(np.float32)
+                np.testing.assert_array_equal(correction,expected)
             generator.compile_graph(tmp/'graph.onnx',tmp/'one',5,tmp/'cal.json','minmax',('first',))
             self.assertEqual((tmp/'one/model.cpp').read_text().count('if (ctx.int8)'),1)
             with self.assertRaisesRegex(ValueError,'unknown FP32 layers'):
