@@ -65,8 +65,8 @@ def chart_gpu():
 def chart_cpu():
     plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 9, "svg.fonttype": "none"})
     rows = [("PyTorch eager FP32", 18.0), ("ncnn FP32", 17.6), ("ONNX Runtime FP32", 22.9),
-            ("OpenVINO FP32", 24.9), ("Engine próprio FP32 *", 21.4), ("Engine próprio INT8 *", 47.8), ("OpenVINO INT8", 67.1)]
-    fig, ax = plt.subplots(figsize=(7.0, 3.2))
+            ("OpenVINO FP32", 24.9), ("OpenVINO INT8", 67.1)]
+    fig, ax = plt.subplots(figsize=(7.0, 2.6))
     for i, (name, fps) in enumerate(rows):
         ax.barh(i, fps, height=0.6, color=BLUE, zorder=3)
         ax.text(fps + 0.8, i, f"{fps:.1f}".replace(".", ","), va="center", ha="left", color=INK,
@@ -74,7 +74,7 @@ def chart_cpu():
     ax.set_yticks(range(len(rows)), [r[0] for r in rows])
     ax.invert_yaxis()
     ax.set_xlim(0, 80)
-    ax.set_xlabel("Inferências por segundo (i5-13450HX, 6 threads nos P-cores; medianas; * host com carga)", color=INK2)
+    ax.set_xlabel("Inferências por segundo (i5-13450HX, 6 threads nos P-cores; medianas)", color=INK2)
     style_axes(ax)
     return svg(fig)
 
@@ -143,6 +143,29 @@ def engine_svg():
             parts.append(_arrow(x - gap, 45, x, 45))
     return (f'<svg viewBox="0 0 720 90" xmlns="http://www.w3.org/2000/svg" role="img" '
             f'aria-label="Pipeline do engine próprio">{"".join(parts)}</svg>')
+
+
+def chart_engine():
+    """Engine próprio vs OpenVINO na MESMA sessão (PBI-098): latência medida e ideal estimado (p5)."""
+    plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 9, "svg.fonttype": "none"})
+    rows = [("Engine próprio FP32", 47.48, 45.80), ("OpenVINO FP32", 43.52, 41.44),
+            ("Engine próprio INT8", 20.94, 19.78), ("OpenVINO INT8", 17.01, 15.06)]
+    fig, ax = plt.subplots(figsize=(7.0, 3.0))
+    h, gap = 0.36, 0.04
+    for i, (name, measured, ideal) in enumerate(rows):
+        for j, (value, color, label) in enumerate(((measured, BLUE, "Medido (mediana de 3 rodadas)"),
+                                                   (ideal, ORANGE, "Ideal estimado (p5)"))):
+            y = i + (j - 0.5) * (h + gap)
+            ax.barh(y, value, height=h, color=color, label=label if i == 0 else None, zorder=3)
+            ax.text(value + 0.6, y, f"{value:.2f}".replace(".", ","), va="center", ha="left",
+                    color=INK, fontsize=8.5)
+    ax.set_yticks(range(len(rows)), [r[0] for r in rows])
+    ax.invert_yaxis()
+    ax.set_xlim(0, 56)
+    ax.set_xlabel("Latência em ms, menor é melhor (i5-13450HX, 6 threads nos P-cores, mesma sessão)", color=INK2)
+    style_axes(ax)
+    ax.legend(loc="lower right", frameon=False, fontsize=8.5, labelcolor=INK2)
+    return svg(fig)
 
 
 CSS = """
@@ -216,7 +239,7 @@ def table(header, rows, num_cols=(), best=(), cls=""):
 
 
 def build_html():
-    gpu_chart, cpu_chart = chart_gpu(), chart_cpu()
+    gpu_chart, cpu_chart, engine_chart = chart_gpu(), chart_cpu(), chart_engine()
     S = []
     S.append("""
 <h1>YOLOv10s compilada para runtimes nativos</h1>
@@ -489,7 +512,8 @@ def build_html():
         ["OpenVINO FP32", "43,52 ms", "41,44 ms", "23,0", "—", "8/8 estrito", "49,33"],
         ["OpenVINO INT8", "17,01 ms", "15,06 ms", "58,8", "2,56×", "8/8 INT8", "49,02 (−0,31)"],
     ], num_cols=(1, 2, 3, 4)))
-    S.append("""
+    S.append(f'<div class="figure">{engine_chart}</div>')
+    S.append("""<p class="small">As quatro variantes foram medidas na mesma sessão (3 rodadas rotativas, 60 s de resfriamento), com navegador e chat abertos. A barra laranja é a estimativa sem essa carga: a média das 5% iterações mais rápidas de cada execução.</p>
 <div class="note"><b>Resultado INT8:</b> o engine fica a <b>1,23× do OpenVINO INT8</b> (1,31× nos ideais), com perda de acurácia menor (0,26 contra 0,31 ponto de mAP). A meta de 20 ms ficou na fronteira: 20,94 ms medidos com carga, ~19,8 ms estimados sem ela. O ideal do OpenVINO INT8 (15,06 ms) bate de novo com a medição em host ocioso da rodada 3 (14,91 ms). A distância cresce no INT8 porque quantizar no empacotamento custa ~25% do tempo, enquanto o OpenVINO mantém as ativações em INT8 entre camadas; esse é o próximo passo.</div>
 """)
 
