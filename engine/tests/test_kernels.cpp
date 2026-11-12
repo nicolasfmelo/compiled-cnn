@@ -67,6 +67,7 @@ int main(int argc, char** argv) {
         std::cout << "PASS conv1x1/3x3 GEMM K/M/N tails, stride/pad, depthwise3x3/7x7, epilogues\n";
         for (int width : {1,7,19,32}) {
             Buffer x({1,3,5,width}), r({1,3,5,width}), o({1,3,5,width});
+            for (float& v : x.storage) v = -std::abs(v)-1; // zero padding would fail
             engine::maxpool(ref,x.t,r.t); engine::maxpool(opt,x.t,o.t); equal(r,o,0);
             Buffer rr({1,3,10,width*2}), oo({1,3,10,width*2});
             engine::resize(ref,x.t,rr.t); engine::resize(opt,x.t,oo.t); equal(rr,oo,0);

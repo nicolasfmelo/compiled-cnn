@@ -8,7 +8,6 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 import math
-import json
 import numpy as np
 import onnx
 from onnx import numpy_helper, helper
@@ -30,6 +29,10 @@ def prod(s):
 
 def compile_graph(source, destination, stage):
     model = onnx.load(source)
+    if any(n.domain not in ('', 'ai.onnx') for n in model.graph.node):
+        raise ValueError('custom ONNX domains are unsupported')
+    if any(x.type.tensor_type.elem_type != onnx.TensorProto.FLOAT for x in model.graph.input):
+        raise ValueError('only FP32 graph inputs are supported')
     onnx.checker.check_model(model, full_check=True)
     if len(model.graph.input) != 1 or len(model.graph.output) != 1:
         raise ValueError('exactly one input/output required')
@@ -374,6 +377,12 @@ public:
     plan = [f'stage: M{stage}', f'arena bytes: {arena_size*4}', f'weights bytes: {len(blob)}', 'layout: contiguous NCHW (ONNX row-major for attention/head)', 'Resize: nearest/asymmetric/floor x2', f'zero-copy concats: {len(views)}']
     macs = sum(op.get('macs', 0) for op in ops)
     plan += [f'MACs: {macs}', f'FLOPs (2 x MACs): {macs*2}', '']
+    plan += [f'concat view: {name}' for name in views]
+    for name in names:
+        r, off = root(name)
+        if values[r].constant is None and r in offsets:
+            plan.append(f'buffer {name}: shape={values[name].shape} root={r} offset_floats={offsets[r]+off} root_live_ops={lifetimes[r]}')
+    plan.append('')
     def t(x): return f't_[{ids[x]}]'
     for i, op in enumerate(ops):
         kind, ins, outs = op['kind'], op['inputs'], op['outputs']
@@ -419,7 +428,7 @@ def main():
     args = p.parse_args()
     try:
         compile_graph(args.input, args.output, args.stage)
-    except (ValueError, AssertionError, KeyError) as error:
+    except (ValueError, AssertionError, KeyError, onnx.checker.ValidationError, onnx.shape_inference.InferenceError) as error:
         p.exit(1, f'Graph compilation failed: {error}\n')
 
 

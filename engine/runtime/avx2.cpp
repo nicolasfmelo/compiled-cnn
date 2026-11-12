@@ -7,7 +7,8 @@ namespace engine {
 // Four output channels x sixteen spatial positions, eight independent FMA
 // chains. Packed A is [oc/4][K][4], B is a spatial row-major panel. KB=128,
 // NB=64 keep the hot B panel (32 KiB) plus weights/output below 48 KiB L1d;
-// the complete im2col tile is at most 576 KiB, below the P-core's 1.25 MiB L2.
+// the complete im2col tile is at most 1.125 MiB for this graph, below the
+// P-core's 1.25 MiB L2.
 static void gemm4x16(const float* a, const float* b, float* y, int k,
                      int bs, int ys, bool first, bool last, const float* bias, bool activation, const float* residual) {
     __m256 c00 = first ? _mm256_setzero_ps() : _mm256_loadu_ps(y);
