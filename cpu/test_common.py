@@ -47,6 +47,40 @@ class ValidationTests(unittest.TestCase):
         self.assertFalse(compare(actual, self.ref, int8=True)['ok'])
 
 
+class Int8PairingTests(unittest.TestCase):
+    def candidates(self, score, shift, different_class=False):
+        reference = np.zeros((1, 300, 6), dtype=np.float32)
+        actual = np.zeros_like(reference)
+        reference[0, 0] = [0, 0, 100, 100, score, 0]
+        actual[0, 0] = [shift, 0, 100 + shift, 100, score, int(different_class)]
+        return actual, reference
+
+    def test_low_overlap_low_scores_are_acceptable_unmatched(self):
+        actual, reference = self.candidates(.26, 90)  # IoU = 10/190 ≈ 0.0526
+        result = compare(actual, reference, int8=True)
+        self.assertTrue(result['ok'])
+        self.assertEqual([r['side'] for r in result['unmatched']], ['actual', 'expected'])
+        self.assertEqual(result['boxes_max'], 0)
+        # FP32 must still force the pair and reject its IoU/box differences.
+        self.assertFalse(compare(actual, reference)['ok'])
+
+    def test_low_overlap_high_scores_fail_as_unmatched(self):
+        actual, reference = self.candidates(.40, 90)
+        result = compare(actual, reference, int8=True)
+        self.assertFalse(result['ok'])
+        self.assertEqual(len(result['unmatched']), 2)
+        self.assertIn('unmatched score >= 0.30', result['reason'])
+        self.assertNotIn('IoU below threshold', result['reason'])
+
+    def test_matching_geometry_still_requires_same_class(self):
+        actual, reference = self.candidates(.26, 100 * .15 / 1.85, different_class=True)
+        result = compare(actual, reference, int8=True)
+        self.assertAlmostEqual(result['min_iou'], .85, places=6)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['unmatched'], [])
+        self.assertIn('class mismatch', result['reason'])
+
+
 class MapPreprocessingTests(unittest.TestCase):
     def test_undo_letterbox_and_threshold(self):
         from eval_map import original_boxes

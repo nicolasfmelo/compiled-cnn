@@ -44,8 +44,8 @@ def iou(a, b):
 def compare(output, reference, int8=False):
     """Strict mode mirrors native match/validate, including count-mismatch early return.
 
-    INT8 retains greedy geometry-only pairing. Unpaired detections (including
-    zero-overlap candidates) are reported and allowed only below score 0.30.
+    INT8 retains greedy geometry-only pairing, but only at IoU >= 0.80.
+    Remaining detections on both sides are allowed only below score 0.30.
     """
     output = np.asarray(output, dtype=np.float32)
     if output.shape != (1, 300, 6) or not np.isfinite(output).all():
@@ -68,7 +68,7 @@ def compare(output, reference, int8=False):
                     value = iou(actual[i], expected[j])
                     if value > best:
                         best, ai, bi = value, i, j
-            if int8 and best == 0:
+            if int8 and best < float(np.float32(0.80)):
                 break
             aa.remove(ai)
             bb.remove(bi)
