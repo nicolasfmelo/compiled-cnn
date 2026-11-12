@@ -1,7 +1,13 @@
 #include "runtime.h"
 #include <limits>
+#include <cpuid.h>
 
 namespace engine {
+bool has_avx_vnni() {
+    unsigned a,b,c,d;
+    // check_host() separately checks AVX2/OS support for YMM state.
+    return __get_cpuid_count(7,1,&a,&b,&c,&d) && (a & (1u<<4));
+}
 void conv_ref(const Tensor& x, const Tensor& w, const Tensor& b, Tensor& y, ConvParams p, const Tensor* residual) {
     const int ic = x.shape[1], ih = x.shape[2], iw = x.shape[3];
     const int oc = y.shape[1], oh = y.shape[2], ow = y.shape[3];

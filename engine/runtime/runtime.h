@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
@@ -31,7 +32,7 @@ public:
     float* data() { return p_; }
 };
 struct Context {
-    bool optimized, profiling = false;
+    bool optimized, profiling = false, int8 = false;
     std::map<std::string, double> profile;
     ThreadPool pool;
     std::vector<std::vector<float>> scratch;
@@ -58,6 +59,19 @@ struct ConvParams {
     int kh, kw, sy, sx, py, px, group, silu;
     int spatial_tile = 64, output_chunk = 0;
 };
+struct QuantConv {
+    const int8_t* weights; // [ceil(OC/6), ceil(K/4), 6, 4]
+    const float* products; // activation_scale * weight_scale[oc]
+    const float* corrected_bias;
+    float activation_scale;
+    int zero_point;
+};
+bool has_avx_vnni();
+void pack_int8(const Tensor&, const Tensor&, ConvParams, int pos, int count,
+               float scale, int zero_point, uint8_t*);
+void dot_int8(const int8_t*, const uint8_t*, int k4, int32_t*); // 6 x 16
+void dot_int8_ref(const int8_t*, const uint8_t*, int k4, int32_t*);
+void conv_int8(Context&, const Tensor&, Tensor&, ConvParams, QuantConv, const Tensor* residual = nullptr);
 inline float sigmoid(float x) {
     // Branching avoids overflow and preserves subnormal sigmoid(-100).
     if (x >= 0) return 1.f / (1.f + std::exp(-x));
