@@ -1,17 +1,27 @@
 #!/usr/bin/env bash
-# Nine variants, three rotating rounds, cooldown before EVERY attempt.
+# Five variants by default (nine with --with-intel), three rotating rounds.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+variants=(nvidia-fp32-resident nvidia-fp16-resident nvidia-fp32-host nvidia-fp16-host cpu-fp32-host)
+if (( $# == 1 )) && [[ "$1" == --with-intel ]]; then
+  variants+=(intel-fp32-resident intel-fp16-resident intel-fp32-host intel-fp16-host)
+elif (( $# != 0 )); then
+  echo 'usage: bash native/bench_ncnn.sh [--with-intel]' >&2
+  exit 2
+fi
+count=${#variants[@]}
+# Coprime shifts visit every starting position for both five and nine variants.
+rotation=2
+if (( count == 9 )); then rotation=4; fi
 runs=artifacts/bench/round4-runs
 mkdir -p "$runs"
 rm -f artifacts/bench/round4-summary.txt "$runs"/round-{1,2,3}-*.txt
-variants=(nvidia-fp32-resident nvidia-fp16-resident intel-fp32-resident intel-fp16-resident
-          nvidia-fp32-host nvidia-fp16-host intel-fp32-host intel-fp16-host cpu-fp32-host)
 {
+  echo "session: variants=$count | rounds=3 | rotation=$rotation | Intel opt-in=$((count == 9))"
   for round in 1 2 3; do
-    shift=$(( (round - 1) * 3 ))
-    for index in {0..8}; do
-      variant=${variants[$(( (index + shift) % 9 ))]}
+    shift=$(( (round - 1) * rotation ))
+    for (( index=0; index<count; ++index )); do
+      variant=${variants[$(( (index + shift) % count ))]}
       IFS=- read -r device precision mode <<< "$variant"
       output="$runs/round-$round-$variant.txt"
       for attempt in 0 1 2 3 4 5; do
