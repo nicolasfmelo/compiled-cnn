@@ -52,7 +52,7 @@ transitiva antes desta rodada, é usado para detectar concorrência no benchmark
 - `cpu/quantize_int8.py`: conversão `ov.convert_model` do ONNX fixo, gravação
   dos dois IRs e calibração NNCF; opções para reproduzir as tentativas.
 - `cpu/eval_map.py`: três subprocessos e avaliação restrita aos mesmos 500 IDs.
-- `cpu/bench.py` e `native/bench_cpu.sh`: três rodadas de cinco processos, com
+- `cpu/bench.py` e `scripts/bench_cpu.sh`: três rodadas de cinco processos, com
   cooldown e ordem rotativa; todos os blocos em stdout e `artifacts/bench/round3.txt`.
   Os 15 JSONs aceitos ficam em `artifacts/bench/round3-runs/`, e as medianas em
   `artifacts/bench/round3-summary.{txt,json}`, fora do Git.
@@ -433,12 +433,12 @@ uv run python cpu/quantize_int8.py
 uv run python cpu/validate.py
 uv run python cpu/eval_map.py
 # Aguardar outros builds, downloads e avaliações terminarem antes deste comando.
-bash native/bench_cpu.sh
+bash scripts/bench_cpu.sh
 
 uv run python cpu/test_common.py
 uv run python cpu/test_bench.py
 uv run python -m py_compile cpu/*.py
-bash -n native/bench_cpu.sh
+bash -n scripts/bench_cpu.sh
 git diff --check
 ```
 

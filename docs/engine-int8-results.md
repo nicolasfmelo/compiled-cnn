@@ -269,34 +269,33 @@ uv run python engine/quant/calibrate.py --help
 uv run python engine/quant/calibrate.py
 uv run python engine/gen/generate.py \
   --calibration artifacts/engine/int8/calibration.json --int8-method p99999
-rm -rf engine/build
-cmake -S engine -B engine/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build engine/build
-ctest --test-dir engine/build --output-on-failure
+rm -rf build
+cmake --preset release
+cmake --build --preset release
+ctest --preset release
 uv run python engine/tests/test_generator.py
 uv run python engine/tests/test_engine_client.py
-engine/build/yolo_engine validate artifacts/ref --impl ref --threads 1
-engine/build/yolo_engine validate artifacts/ref --impl opt --threads 1
-taskset -c 0,2,4,6,8,10 engine/build/yolo_engine validate artifacts/ref --threads 6
+build/bin/yolo_engine validate artifacts/ref --impl ref --threads 1
+build/bin/yolo_engine validate artifacts/ref --impl opt --threads 1
+taskset -c 0,2,4,6,8,10 build/bin/yolo_engine validate artifacts/ref --threads 6
 uv run python engine/validate_int8.py
 uv run python engine/eval_map.py
-engine/build/yolo_engine detect artifacts/data/bus.jpg --precision int8 \
+build/bin/yolo_engine detect artifacts/data/bus.jpg --precision int8 \
   --check artifacts/ref/bus.eager_dets.txt
-taskset -c 0,2,4,6,8,10 engine/build/yolo_engine bench \
+taskset -c 0,2,4,6,8,10 build/bin/yolo_engine bench \
   --precision int8 --threads 6 --iters 200 --profile
-taskset -c 0,2,4,6,8,10 engine/build/yolo_engine bench \
+taskset -c 0,2,4,6,8,10 build/bin/yolo_engine bench \
   --precision fp32 --threads 6 --iters 200
-ldd engine/build/yolo_engine
-cmake -S engine -B engine/build-tsan -G Ninja \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENGINE_TSAN=ON
-cmake --build engine/build-tsan --target test_kernels test_int8 test_thread_pool
-ctest --test-dir engine/build-tsan --output-on-failure
-BENCH_SMOKE=1 BENCH_CONTENDED=1 bash native/bench_engine.sh
+ldd build/bin/yolo_engine
+cmake --preset tsan
+cmake --build --preset tsan
+ctest --preset tsan
+BENCH_SMOKE=1 BENCH_CONTENDED=1 bash scripts/bench_engine.sh
 ```
 
 ## Benchmark final (controle térmico, host com carga)
 
-`BENCH_CONTENDED=1 bash native/bench_engine.sh` em 2026-11-12: quatro variantes
+`BENCH_CONTENDED=1 bash scripts/bench_engine.sh` em 2026-11-12: quatro variantes
 na mesma sessão, três rodadas com início rotativo, 60 s de resfriamento antes
 de cada execução, 20 + 200 iterações, seis threads nos P-cores
 (`taskset -c 0,2,4,6,8,10`). OpenVINO FP32 e INT8 exatamente como na rodada 3.

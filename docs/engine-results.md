@@ -374,7 +374,7 @@ em layout blocado (NCHWc8, como o oneDNN) seriam o próximo passo.
 
 ## Benchmark final (controle térmico, host com carga)
 
-`BENCH_CONTENDED=1 bash native/bench_engine.sh` em 2026-11-12: três rodadas
+`BENCH_CONTENDED=1 bash scripts/bench_engine.sh` em 2026-11-12: três rodadas
 com início rotativo, 60 s de resfriamento antes de cada execução, 20 + 200
 iterações por execução, engine em `taskset -c 0,2,4,6,8,10` (6 threads) ou
 `-c 0` (1 thread), OpenVINO FP32 exatamente como na rodada CPU. O navegador
@@ -414,28 +414,28 @@ uv run python engine/gen/generate.py
 sha256sum artifacts/engine/generated/* > /tmp/a
 uv run python engine/gen/generate.py
 sha256sum artifacts/engine/generated/* | diff - /tmp/a
-rm -rf engine/build
-cmake -S engine -B engine/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build engine/build
-ctest --test-dir engine/build --output-on-failure
-engine/build/yolo_engine validate artifacts/ref --impl ref --threads 1
-engine/build/yolo_engine validate artifacts/ref --impl opt --threads 1
-taskset -c 0,2,4,6,8,10 engine/build/yolo_engine validate artifacts/ref --impl opt --threads 6
-engine/build/yolo_engine detect artifacts/data/bus.jpg --check artifacts/ref/bus.eager_dets.txt
-taskset -c 0,2,4,6,8,10 engine/build/yolo_engine bench --threads 6 --iters 200 --profile
-taskset -c 0 engine/build/yolo_engine bench --threads 1
-taskset -c 0 engine/build/yolo_engine bench --threads 1 --iters 50
-ldd engine/build/yolo_engine
+rm -rf build
+cmake --preset release
+cmake --build --preset release
+ctest --preset release
+build/bin/yolo_engine validate artifacts/ref --impl ref --threads 1
+build/bin/yolo_engine validate artifacts/ref --impl opt --threads 1
+taskset -c 0,2,4,6,8,10 build/bin/yolo_engine validate artifacts/ref --impl opt --threads 6
+build/bin/yolo_engine detect artifacts/data/bus.jpg --check artifacts/ref/bus.eager_dets.txt
+taskset -c 0,2,4,6,8,10 build/bin/yolo_engine bench --threads 6 --iters 200 --profile
+taskset -c 0 build/bin/yolo_engine bench --threads 1
+taskset -c 0 build/bin/yolo_engine bench --threads 1 --iters 50
+ldd build/bin/yolo_engine
 uv run python engine/tests/test_generator.py
-cmake -S engine -B engine/build-tsan -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENGINE_TSAN=ON
-cmake --build engine/build-tsan --target test_kernels test_thread_pool
-ctest --test-dir engine/build-tsan --output-on-failure
-cmake -S ncnn/cpp -B ncnn/cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build ncnn/cpp/build
-ncnn/cpp/build/yolo_ncnn check-postprocess artifacts/ncnn
-BENCH_SMOKE=1 bash native/bench_engine.sh
-bash native/bench_engine.sh                    # host ocioso
-BENCH_CONTENDED=1 bash native/bench_engine.sh  # host com carga: registra em vez de descartar
+cmake --preset tsan
+cmake --build --preset tsan
+ctest --preset tsan
+cmake --preset release
+cmake --build --preset release
+build/bin/yolo_ncnn check-postprocess artifacts/ncnn
+BENCH_SMOKE=1 bash scripts/bench_engine.sh
+bash scripts/bench_engine.sh                    # host ocioso
+BENCH_CONTENDED=1 bash scripts/bench_engine.sh  # host com carga: registra em vez de descartar
 ```
 
 Para outro diretório gerado, usar `generate.py --output DIRETÓRIO` e

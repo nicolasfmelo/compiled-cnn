@@ -312,7 +312,7 @@ TRT FP16 é 1,32× o AOTI FP16 (−24,2%). Desligar TF32 aumenta a média FP32
 em **0,43 ms / 5,8%**, mantendo a mesma memória NVML de 262 MiB.
 Os números desta sequência de sete processos substituem a tabela anterior de seis.
 
-Saída literal de `bash native/bench_all.sh`, também salva em
+Saída literal de `bash scripts/bench_all.sh`, também salva em
 `artifacts/bench/round2.txt`:
 
 ```text
@@ -383,7 +383,7 @@ de confiança. A ordem alternada reduz, mas não elimina, deriva térmica.
 
 ## Dependências nativas (`ldd`)
 
-`ldd trt/cpp/build/yolo_trt` resolveu tudo, sem `not found`:
+`ldd build/bin/yolo_trt` resolveu tudo, sem `not found`:
 
 ```text
 libnvinfer.so.11 => /usr/lib/libnvinfer.so.11
@@ -411,42 +411,41 @@ mkdir -p artifacts
 cp -r /home/nicolas/Projects/experimentos/compiled-cnn/artifacts/{data,ref,yolov10s_fp32.pt2,yolov10s_fp16.pt2,export_metadata.json} artifacts/
 cp /home/nicolas/Projects/experimentos/compiled-cnn/yolov10s.pt .
 uv sync
-cmake -S aoti/cpp -B aoti/cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH="$(uv run python -c 'import torch;print(torch.utils.cmake_prefix_path)')"
-cmake --build aoti/cpp/build
+cmake --preset release
+cmake --build --preset release
 for precision in fp32 fp16; do
-  env -u LD_LIBRARY_PATH aoti/cpp/build/yolo_aoti validate \
+  env -u LD_LIBRARY_PATH build/bin/yolo_aoti validate \
     "artifacts/yolov10s_${precision}.pt2" artifacts/ref
 done
 uv run python trt/export_onnx.py
 bash trt/build_engines.sh
-cmake -S trt/cpp -B trt/cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build trt/cpp/build
+cmake --preset release
+cmake --build --preset release
 # Não usar set -e neste loop: o FP32 padrão retorna 1 honestamente nesta rodada.
 for variant in fp32 fp32_notf32 fp16; do
-  env -u LD_LIBRARY_PATH trt/cpp/build/yolo_trt validate \
+  env -u LD_LIBRARY_PATH build/bin/yolo_trt validate \
     "artifacts/yolov10s_${variant}.plan" artifacts/ref
   echo "validate $variant exit=$?"
 done
 for backend in aoti trt; do
   extension=pt2
   if [ "$backend" = trt ]; then extension=plan; fi
-  env -u LD_LIBRARY_PATH "$backend/cpp/build/yolo_$backend" detect \
+  env -u LD_LIBRARY_PATH "build/bin/yolo_$backend" detect \
     "artifacts/yolov10s_fp32.$extension" artifacts/data/bus.jpg \
     --check artifacts/ref/bus.eager_dets.txt
-  env -u LD_LIBRARY_PATH "$backend/cpp/build/yolo_$backend" detect \
+  env -u LD_LIBRARY_PATH "build/bin/yolo_$backend" detect \
     "artifacts/yolov10s_fp16.$extension" artifacts/data/bus.jpg \
     --check artifacts/ref/bus.eager_fp16_dets.txt
 done
-env -u LD_LIBRARY_PATH trt/cpp/build/yolo_trt detect \
+env -u LD_LIBRARY_PATH build/bin/yolo_trt detect \
   artifacts/yolov10s_fp32_notf32.plan artifacts/data/bus.jpg \
   --check artifacts/ref/bus.eager_dets.txt
-bash native/bench_all.sh
-ldd trt/cpp/build/yolo_trt
-ldd aoti/cpp/build/yolo_aoti
+bash scripts/bench_all.sh
+ldd build/bin/yolo_trt
+ldd build/bin/yolo_aoti
 uv run python -m py_compile trt/export_onnx.py aoti/export.py aoti/bench_eager.py
 bash -n trt/build_engines.sh
-bash -n native/bench_all.sh
+bash -n scripts/bench_all.sh
 git diff --check
 ```
 

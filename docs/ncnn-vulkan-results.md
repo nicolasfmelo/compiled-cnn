@@ -115,10 +115,10 @@ Por isso `overall_max` linha a linha continua apenas informativo.
 CLI, na raiz do projeto:
 
 ```bash
-ncnn/cpp/build/yolo_ncnn validate PARAM BIN REF_DIR --device nvidia --precision fp32
-ncnn/cpp/build/yolo_ncnn bench PARAM BIN --device intel --precision fp16 --mode resident
-ncnn/cpp/build/yolo_ncnn detect PARAM BIN IMAGE --device cpu --precision fp32 --check DETS_TXT
-ncnn/cpp/build/yolo_ncnn check-postprocess artifacts/ncnn
+build/bin/yolo_ncnn validate PARAM BIN REF_DIR --device nvidia --precision fp32
+build/bin/yolo_ncnn bench PARAM BIN --device intel --precision fp16 --mode resident
+build/bin/yolo_ncnn detect PARAM BIN IMAGE --device cpu --precision fp32 --check DETS_TXT
+build/bin/yolo_ncnn check-postprocess artifacts/ncnn
 ```
 
 `--device`: `nvidia|intel|cpu`; `--precision`: `fp32|fp16`; `--mode`:
@@ -213,7 +213,7 @@ variante substituída na tabela de desempenho. Logs completos em
 
 ## Benchmark com controle térmico
 
-`native/bench_ncnn.sh` roda **cinco variantes por padrão** em processos
+`scripts/bench_ncnn.sh` roda **cinco variantes por padrão** em processos
 separados, **três rodadas**, cooldown de **60 s antes de cada tentativa** e
 check de host de cinco segundos via `uv run python cpu/bench.py --check-host`.
 `--with-intel` acrescenta as quatro variantes Intel (nove no total), somente
@@ -397,34 +397,34 @@ Preparar os artefatos conforme o design, da origem somente leitura. Não rodar
 ```bash
 uv sync
 uv run python ncnn/export_ncnn.py
-cmake -S ncnn/cpp -B ncnn/cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build ncnn/cpp/build
-ncnn/cpp/build/yolo_ncnn check-postprocess artifacts/ncnn
+cmake --preset release
+cmake --build --preset release
+build/bin/yolo_ncnn check-postprocess artifacts/ncnn
 for device in nvidia intel cpu; do
   for precision in fp32 fp16; do
     [ "$device/$precision" = cpu/fp16 ] && continue
     for mode in resident host; do
       [ "$device/$mode" = cpu/resident ] && continue
-      taskset -c 0,2,4,6,8,10 ncnn/cpp/build/yolo_ncnn validate \
+      taskset -c 0,2,4,6,8,10 build/bin/yolo_ncnn validate \
         artifacts/ncnn/yolov10s.ncnn.param artifacts/ncnn/yolov10s.ncnn.bin \
         artifacts/ref --device "$device" --precision "$precision" --mode "$mode"
       echo "validate $device $precision $mode exit=$?" # Intel FP16 retorna 1
     done
     suffix=eager_dets
     [ "$precision" = fp16 ] && suffix=eager_fp16_dets
-    ncnn/cpp/build/yolo_ncnn detect artifacts/ncnn/yolov10s.ncnn.param \
+    build/bin/yolo_ncnn detect artifacts/ncnn/yolov10s.ncnn.param \
       artifacts/ncnn/yolov10s.ncnn.bin artifacts/data/bus.jpg \
       --device "$device" --precision "$precision" \
       --check "artifacts/ref/bus.$suffix.txt"
   done
 done
 # Executar somente após exportação, build e validações, sem trabalho pesado paralelo.
-bash native/bench_ncnn.sh  # padrão: NVIDIA + CPU, cinco variantes
+bash scripts/bench_ncnn.sh  # padrão: NVIDIA + CPU, cinco variantes
 # Opt-in para uma nova sessão completa com Intel (não executada após a decisão):
-# bash native/bench_ncnn.sh --with-intel
-ldd ncnn/cpp/build/yolo_ncnn
+# bash scripts/bench_ncnn.sh --with-intel
+ldd build/bin/yolo_ncnn
 uv run python -m py_compile ncnn/export_ncnn.py
-bash -n native/bench_ncnn.sh
+bash -n scripts/bench_ncnn.sh
 git diff --check
 ```
 

@@ -2,7 +2,7 @@
 
 Step-by-step instructions to rebuild every artifact, validate every backend and rerun every benchmark of this experiment. Commands are run from the repository root. Generated files go to `artifacts/` (not versioned).
 
-Tested on CachyOS (Arch-based) with the hardware described in the [README](../README.md#hardware). Other distributions work if you install the equivalent packages; absolute numbers will differ on other hardware.
+Tested on CachyOS (Arch-based) with the hardware described in the [README](../README.md#baseline-hardware). Other distributions work if you install the equivalent packages; absolute numbers will differ on other hardware.
 
 ## 1. System prerequisites
 
@@ -44,6 +44,35 @@ uv run python -c "from ultralytics import YOLO; YOLO('yolov10s.pt')"  # download
 
 The PyTorch wheels bring their own CUDA 12.8 runtime; the system CUDA toolkit is only used by the TensorRT runner. `aoti/export.py` builds AOTInductor packages against the CUDA 12.8 headers from the wheels on purpose, so the two CUDA versions never mix.
 
+## Building the C++ programs
+
+All C++ code is built by the top-level `CMakeLists.txt`, with presets:
+
+```bash
+cmake --preset release            # configure into build/; prints which runners are enabled
+cmake --build --preset release    # binaries in build/bin/
+ctest --preset release            # own-engine unit tests
+```
+
+| Runner | Enabled when | Option |
+|---|---|---|
+| `yolo_aoti` | the PyTorch wheel exists in `.venv` (`uv sync`); override with `-DCNN_TORCH_CMAKE=<torch>/share/cmake` | `CNN_AOTI` |
+| `yolo_trt` | `NvInfer.h` is found and the CUDA toolkit is in `/opt/cuda` | `CNN_TRT` |
+| `yolo_ncnn` | the `ncnn` CMake package is found | `CNN_NCNN` |
+| `yolo_engine` | `artifacts/engine/generated/model.cpp` exists (section 8); override with `-DENGINE_GENERATED_DIR=` | `CNN_ENGINE` |
+
+Each option is `AUTO` (default: build if found), `ON` (error if not found) or `OFF`. The configure step prints a summary, for example:
+
+```text
+-- compiled-cnn runners (binaries in .../build/bin):
+  AOTI: ON  -> aoti/cpp
+  TRT: skipped (TensorRT (NvInfer.h) or CUDA toolkit (/opt/cuda) not found)
+  NCNN: ON  -> ncnn/cpp
+  ENGINE: skipped (generated model missing: run engine/export_raw_onnx.py and engine/gen/generate.py first)
+```
+
+Re-run `cmake --preset release` after installing a dependency or generating the engine model. The runners share the header-only `cnn_native` target (`native/`). The benchmark scripts read binaries from `build/bin` (override with `CNN_BIN=<dir>`). For the engine under ThreadSanitizer, use `cmake --preset tsan && cmake --build --preset tsan && ctest --preset tsan`.
+
 ## 3. Round 0: webcam demo
 
 ```bash
@@ -75,11 +104,9 @@ uv run python aoti/bench_eager.py --cudnn-benchmark   # variant with cuDNN autot
 **C++ runner**
 
 ```bash
-cmake -S aoti/cpp -B aoti/cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH="$(uv run python -c 'import torch;print(torch.utils.cmake_prefix_path)')"
-cmake --build aoti/cpp/build
+cmake --preset release && cmake --build --preset release   # see "Building the C++ programs" above
 
-B=aoti/cpp/build/yolo_aoti
+B=build/bin/yolo_aoti
 $B validate artifacts/yolov10s_fp32.pt2 artifacts/ref
 $B validate artifacts/yolov10s_fp16.pt2 artifacts/ref
 $B detect artifacts/yolov10s_fp32.pt2 artifacts/data/bus.jpg --check artifacts/ref/bus.eager_dets.txt
@@ -99,10 +126,9 @@ PASS bus fp32 boxes_max=0.022919 scores_max=0.000593 dets=5/5 min_iou=0.999774 o
 ```bash
 uv run python trt/export_onnx.py      # artifacts/yolov10s_fp32.onnx and yolov10s_fp16.onnx (no CLI options)
 bash trt/build_engines.sh             # three engines: fp32, fp16 and fp32_notf32 (~1 min each)
-cmake -S trt/cpp -B trt/cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build trt/cpp/build
+cmake --build --preset release        # rebuilds; yolo_trt is enabled once TensorRT is installed
 
-B=trt/cpp/build/yolo_trt
+B=build/bin/yolo_trt
 for plan in yolov10s_fp32 yolov10s_fp32_notf32 yolov10s_fp16; do
   $B validate artifacts/$plan.plan artifacts/ref
 done
@@ -114,10 +140,10 @@ Expected: `yolov10s_fp32.plan` (TF32 allowed by default) may show one `FAIL ... 
 Benchmark eager vs AOTInductor vs TensorRT (7 variants, one process each):
 
 ```bash
-bash native/bench_all.sh              # writes artifacts/bench/round2.txt
+bash scripts/bench_all.sh              # writes artifacts/bench/round2.txt
 ```
 
-`ldd trt/cpp/build/yolo_trt` should list only `libnvinfer.so.11`, `libcudart.so.13` and system libraries.
+`ldd build/bin/yolo_trt` should list only `libnvinfer.so.11`, `libcudart.so.13` and system libraries.
 
 ## 6. Round 3: CPU
 
@@ -134,7 +160,7 @@ INT8 calibration uses val2017 images 501–800 (by image id), disjoint from the 
 Benchmark (about 20 minutes):
 
 ```bash
-bash native/bench_cpu.sh              # 5 variants x 3 rotating rounds, 60 s cooldown, median summary
+bash scripts/bench_cpu.sh              # 5 variants x 3 rotating rounds, 60 s cooldown, median summary
 cat artifacts/bench/round3-summary.txt
 ```
 
@@ -144,10 +170,9 @@ Before each run the script checks that the machine is idle and discards the run 
 
 ```bash
 uv run python ncnn/export_ncnn.py     # pnnx conversion to artifacts/ncnn/yolov10s.ncnn.{param,bin} (no CLI options)
-cmake -S ncnn/cpp -B ncnn/cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build ncnn/cpp/build
+cmake --build --preset release
 
-B=ncnn/cpp/build/yolo_ncnn
+B=build/bin/yolo_ncnn
 P="artifacts/ncnn/yolov10s.ncnn.param artifacts/ncnn/yolov10s.ncnn.bin"
 $B check-postprocess artifacts/ncnn                  # C++ YOLOv10 post-process vs Python: bit-match
 $B validate $P artifacts/ref --device nvidia --precision fp16
@@ -165,8 +190,8 @@ ncnn does not support the TopK/Gather of the YOLOv10 head, so the ncnn graph end
 Benchmark:
 
 ```bash
-bash native/bench_ncnn.sh             # NVIDIA fp32/fp16 x resident/host + CPU fp32, 3 rounds (~20 min)
-bash native/bench_ncnn.sh --with-intel   # adds the 4 Intel iGPU variants (each run takes 2-4 minutes)
+bash scripts/bench_ncnn.sh             # NVIDIA fp32/fp16 x resident/host + CPU fp32, 3 rounds (~20 min)
+bash scripts/bench_ncnn.sh --with-intel   # adds the 4 Intel iGPU variants (each run takes 2-4 minutes)
 ```
 
 Diagnostics flags of `yolo_ncnn`: `--storage-only` (FP16 storage, FP32 arithmetic), `--no-coop` (disable cooperative matrix), `--no-winograd`, `--no-sgemm`.
@@ -178,12 +203,12 @@ A C++ engine written for this one graph: a Python generator reads the ONNX and e
 ```bash
 uv run python engine/export_raw_onnx.py     # artifacts/engine/yolov10s_raw.onnx, output [1,8400,84] (before top-300)
 uv run python engine/gen/generate.py        # artifacts/engine/generated/{model.cpp,model.h,weights.bin,weights.S,plan.txt}
-cmake -S engine -B engine/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build engine/build
-ctest --test-dir engine/build --output-on-failure      # kernel and thread-pool unit tests
+cmake --preset release                 # re-run configure once: yolo_engine is enabled when the generated model exists
+cmake --build --preset release
+ctest --preset release                 # kernel, INT8 and thread-pool unit tests
 uv run python engine/tests/test_generator.py           # generator tests (synthetic ONNX graphs)
 
-B=engine/build/yolo_engine
+B=build/bin/yolo_engine
 $B validate artifacts/ref --impl ref --threads 1       # plain reference loops (~22 s per image)
 $B validate artifacts/ref --impl opt --threads 1
 taskset -c 0,2,4,6,8,10 $B validate artifacts/ref --impl opt --threads 6
@@ -199,10 +224,10 @@ INT8 path (PBI-098; needs the COCO download from section 6). Dense convolutions 
 ```bash
 uv run python engine/quant/calibrate.py     # artifacts/engine/int8/calibration.json (deterministic, ~1 min)
 uv run python engine/gen/generate.py --calibration artifacts/engine/int8/calibration.json --int8-method p99999
-cmake --build engine/build
+cmake --build --preset release
 uv run python engine/validate_int8.py       # round-3 INT8 criterion via `yolo_engine serve`; expect 8/8
 uv run python engine/eval_map.py            # mAP on the 500 evaluation images: fp32 49.33, int8 49.07, drop 0.26
-taskset -c 0,2,4,6,8,10 engine/build/yolo_engine bench --precision int8 --threads 6 --profile
+taskset -c 0,2,4,6,8,10 build/bin/yolo_engine bench --precision int8 --threads 6 --profile
 ```
 
 Without `--calibration` the generator emits the FP32-only model, byte-identical to the PBI-097 output. `--int8-method minmax` reproduces the first attempt (fails the INT8 criterion on 2 images); `--fp32-layers` keeps named convolutions in FP32. `--precision int8` fails with a clear error on CPUs without AVX-VNNI.
@@ -210,8 +235,8 @@ Without `--calibration` the generator emits the FP32-only model, byte-identical 
 Benchmark (engine FP32 and INT8 with 6 threads, OpenVINO FP32 and INT8, same session, 3 rotating rounds, ~20 min):
 
 ```bash
-bash native/bench_engine.sh                     # idle host: runs with external load are discarded and retried
-BENCH_CONTENDED=1 bash native/bench_engine.sh   # busy host: records external load instead of discarding
+bash scripts/bench_engine.sh                     # idle host: runs with external load are discarded and retried
+BENCH_CONTENDED=1 bash scripts/bench_engine.sh   # busy host: records external load instead of discarding
 cat artifacts/engine/bench/engine-summary.txt
 ```
 

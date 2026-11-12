@@ -303,7 +303,7 @@ outras máquinas e sessões.
 
 ## Dependências nativas (`ldd`)
 
-O `ldd aoti/cpp/build/yolo_aoti` resolveu todas as bibliotecas, sem `not found`:
+O `ldd build/bin/yolo_aoti` resolveu todas as bibliotecas, sem `not found`:
 
 - Wheel Torch: `libtorch.so`, `libtorch_cpu.so`, `libtorch_cuda.so`, `libc10.so`,
   `libc10_cuda.so`, `libtorch_nvshmem.so` e `libgomp.so.1`.
@@ -332,13 +332,11 @@ Executar na raiz do projeto, na mesma máquina, com GPU disponível:
 ```bash
 uv sync
 uv run python aoti/export.py --capture-webcam
-cmake -S aoti/cpp -B aoti/cpp/build -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH="$(uv run python -c 'import torch;print(torch.utils.cmake_prefix_path)')"
-cmake --build aoti/cpp/build
+cmake --preset release
+cmake --build --preset release
 
 for precision in fp32 fp16; do
-  env -u LD_LIBRARY_PATH aoti/cpp/build/yolo_aoti validate \
+  env -u LD_LIBRARY_PATH build/bin/yolo_aoti validate \
     "artifacts/yolov10s_${precision}.pt2" artifacts/ref
 done
 # Oito processos, alternando eager/AOTI para distribuir a deriva térmica.
@@ -347,17 +345,17 @@ for precision in fp32 fp16; do
     flags=()
     if [ "$tuning" = on ]; then flags+=(--cudnn-benchmark); fi
     uv run python aoti/bench_eager.py --precision "$precision" "${flags[@]}"
-    env -u LD_LIBRARY_PATH aoti/cpp/build/yolo_aoti bench \
+    env -u LD_LIBRARY_PATH build/bin/yolo_aoti bench \
       "artifacts/yolov10s_${precision}.pt2" "${flags[@]}"
   done
 done
-env -u LD_LIBRARY_PATH aoti/cpp/build/yolo_aoti detect \
+env -u LD_LIBRARY_PATH build/bin/yolo_aoti detect \
   artifacts/yolov10s_fp32.pt2 artifacts/data/bus.jpg \
   --check artifacts/ref/bus.eager_dets.txt
-env -u LD_LIBRARY_PATH aoti/cpp/build/yolo_aoti detect \
+env -u LD_LIBRARY_PATH build/bin/yolo_aoti detect \
   artifacts/yolov10s_fp16.pt2 artifacts/data/bus.jpg \
   --check artifacts/ref/bus.eager_fp16_dets.txt
-ldd aoti/cpp/build/yolo_aoti
+ldd build/bin/yolo_aoti
 ```
 
 O exportador baixa `yolov10s.pt` se necessário. Para capturar novamente, remover
