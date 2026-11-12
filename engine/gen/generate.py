@@ -8,6 +8,7 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 import math
+import json
 import numpy as np
 import onnx
 from onnx import numpy_helper, helper
@@ -27,8 +28,13 @@ def prod(s):
     return math.prod(s)
 
 
-def compile_graph(source, destination, stage):
+def compile_graph(source, destination, stage, calibration=None, int8_method='minmax', fp32_layers=()):
+    calibration = json.loads(Path(calibration).read_text()) if calibration is not None else None
+    fp32_layers = set(fp32_layers)
     model = onnx.load(source)
+    conv_names = {n.name for n in model.graph.node if n.op_type == 'Conv'}
+    if fp32_layers - conv_names:
+        raise ValueError(f'unknown FP32 layers: {sorted(fp32_layers - conv_names)}')
     if any(n.domain not in ('', 'ai.onnx') for n in model.graph.node):
         raise ValueError('custom ONNX domains are unsupported')
     if any(x.type.tensor_type.elem_type != onnx.TensorProto.FLOAT for x in model.graph.input):
@@ -376,6 +382,41 @@ def compile_graph(source, destination, stage):
             packed = np.zeros(((oc+mr-1)//mr, k, mr), np.float32)
             for c in range(oc): packed[c//mr, :, c%mr] = w[c]
             op['packed'] = pack(op['name']+'/packed', packed)
+    if calibration is not None:
+        def pack_bytes(name, array):
+            blob.extend(bytes((-len(blob)) % 64))
+            offset = len(blob)//4
+            blob.extend(array.tobytes())
+            blob.extend(bytes((-len(blob)) % 4))
+            return offset
+        for op in ops:
+            if op['kind'] != 'Conv' or op['group'] != 1 or op['name'] in fp32_layers:
+                continue
+            # Keep the original ONNX input name, NOT the alias root introduced
+            # by SiLU/residual/concat fusion in the arena planner.
+            stats = calibration['tensors'][op['inputs'][0]]
+            lo, hi = (stats['min'], stats['max']) if int8_method == 'minmax' else stats[int8_method]
+            lo, hi = min(lo, 0.), max(hi, 0.)
+            scale_a = np.float32((hi-lo)/255 if hi > lo else 1.)
+            zp = int(np.clip(np.rint(-lo/float(scale_a)), 0, 255))
+            w = const(op['inputs'][1]).reshape(values[op['inputs'][1]].shape[0], -1)
+            oc, k = w.shape
+            scale_w = np.max(np.abs(w), axis=1)/np.float32(127)
+            scale_w = np.where(scale_w > 0, scale_w, np.float32(1)).astype(np.float32)
+            q = np.clip(np.rint(w/scale_w[:, None]), -127, 127).astype(np.int8)
+            k4 = (k+3)//4
+            packed = np.zeros(((oc+mr-1)//mr, k4, mr, 4), np.int8)
+            for c in range(oc):
+                padded = np.pad(q[c], (0, k4*4-k))
+                packed[c//mr, :, c%mr, :] = padded.reshape(k4, 4)
+            product = (scale_a*scale_w).astype(np.float32)
+            correction = (const(op['inputs'][2]).astype(np.float64)
+                          - product.astype(np.float64)*zp*q.sum(axis=1)).astype(np.float32)
+            op['int8'] = dict(packed=pack_bytes(op['name']+'/int8', packed),
+                              scales=pack(op['name']+'/weight_scales', scale_w),
+                              product=pack(op['name']+'/product', product),
+                              correction=pack(op['name']+'/correction', correction),
+                              scale=float(scale_a), zp=zp)
     (destination/'weights.bin').write_bytes(blob)
     (destination/'weights.S').write_text('.section .rodata\n.balign 64\n.global engine_weights\n.hidden engine_weights\nengine_weights:\n.incbin "weights.bin"\n.section .note.GNU-stack,"",@progbits\n')
     header = '''#pragma once
@@ -392,6 +433,8 @@ public:
 };
 }
 '''
+    if calibration is not None:
+        header = '#define ENGINE_HAS_INT8 1\n'+header
     (destination/'model.h').write_text(header)
     lines = ['#include "model.h"', 'extern "C" const float engine_weights[];', 'namespace engine {',
              f'Model::Model(bool optimized, int threads, const std::vector<int>& cpus) : arena_({arena_size}), t_({len(names)}), ctx(optimized, threads, cpus) {{']
@@ -420,6 +463,14 @@ public:
             args = ', '.join(str(op[k]) for k in ('kh', 'kw', 'sy', 'sx', 'py', 'px', 'group', 'silu', 'spatial_tile', 'output_chunk'))
             residual = '&'+t(op['residual']) if 'residual' in op else 'nullptr'
             call = f'conv(ctx, {x}, {t(ins[1])}, {t(ins[2])}, {y}, {{{args}}}, engine_weights + {op["packed"]}, {residual})'
+            if 'int8' in op:
+                q = op['int8']
+                qa = ', '.join(str(op[k]) for k in ('kh', 'kw', 'sy', 'sx', 'py', 'px', 'group', 'silu', 'spatial_tile', 'output_chunk'))
+                icall = (f'conv_int8(ctx, {x}, {y}, {{{qa}}}, '
+                         f'{{reinterpret_cast<const int8_t*>(engine_weights + {q["packed"]}), '
+                         f'engine_weights + {q["product"]}, engine_weights + {q["correction"]}, '
+                         f'{q["scale"]!r}f, {q["zp"]}}}, {residual})')
+                call = f'if (ctx.int8) {{ {icall}; }} else {{ {call}; }}'
             category = 'dwconv' if op['group'] > 1 else 'conv1x1' if op['kh'] == 1 else 'conv3x3s2' if op['sy'] == 2 else 'conv3x3'
         elif kind in ('Silu', 'Sigmoid'):
             call = f'unary(ctx, {x}, {y}, {1 if kind == "Silu" else 0})'
@@ -454,9 +505,13 @@ def main():
     p.add_argument('--input', type=Path, default=ROOT/'artifacts/engine/yolov10s_raw.onnx')
     p.add_argument('--output', type=Path, default=ROOT/'artifacts/engine/generated')
     p.add_argument('--stage', type=int, choices=(1, 2, 3, 4, 5), default=5)
+    p.add_argument('--calibration', type=Path)
+    p.add_argument('--int8-method', choices=('minmax', 'p9999', 'p99999'), default='minmax')
+    p.add_argument('--fp32-layers', default='', help='comma-separated exact ONNX Conv node names')
     args = p.parse_args()
     try:
-        compile_graph(args.input, args.output, args.stage)
+        compile_graph(args.input, args.output, args.stage, args.calibration,
+                      args.int8_method, tuple(filter(None, args.fp32_layers.split(','))))
     except (ValueError, AssertionError, KeyError, onnx.checker.ValidationError, onnx.shape_inference.InferenceError) as error:
         p.exit(1, f'Graph compilation failed: {error}\n')
 
