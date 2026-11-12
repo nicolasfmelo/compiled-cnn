@@ -100,6 +100,16 @@ int main(int argc, char** argv) {
             for (float& v : b.storage) v = std::abs(v)+0.2f;
             engine::binary(ref,a.t,b.t,r.t,op); engine::binary(opt,a.t,b.t,o.t,op); equal(r,o);
         }
+        for (int op=0; op<4; ++op) for (auto shape : {std::vector<int>{1,3,17,1}, std::vector<int>{17,1}, std::vector<int>{137}}) {
+            Buffer a({1,3,17,137}), b(shape), r(a.t.shape), o(a.t.shape);
+            for (float& v : b.storage) v=std::abs(v)+0.2f;
+            engine::binary(ref,a.t,b.t,r.t,op); engine::binary(opt,a.t,b.t,o.t,op); equal(r,o);
+            engine::binary(ref,b.t,a.t,r.t,op); engine::binary(opt,b.t,a.t,o.t,op); equal(r,o);
+        }
+        for (int m : {1,7,8,9,33}) for (int n : {1,7,8,17,37}) {
+            Buffer x({1,m,n}), r({1,n,m}), o(r.t.shape);
+            engine::transpose(ref,x.t,r.t,{0,2,1}); engine::transpose(opt,x.t,o.t,{0,2,1}); equal(r,o,0);
+        }
         {
             Buffer x({1,3,17,137}), r({1,3,137,17}), o(r.t.shape);
             engine::transpose(ref,x.t,r.t,{0,1,3,2}); engine::transpose(opt,x.t,o.t,{0,1,3,2}); equal(r,o,0);

@@ -56,6 +56,29 @@ void binary(Context& ctx, const Tensor& a, const Tensor& b, Tensor& y, int op) {
     }
     auto as = strides(a.shape), bs = strides(b.shape), ys = strides(y.shape);
     size_t rank = y.shape.size(), da = rank-a.shape.size(), db = rank-b.shape.size();
+    if (ctx.optimized) {
+        const size_t width=y.shape.back();
+        const bool sa=a.shape.back()==1, sb=b.shape.back()==1;
+        // Coalesce the last axis. Decode broadcasting once per contiguous run,
+        // not once per float per dimension (notably head strides [1,8400]).
+        ctx.ranges(y.size(),[&](size_t begin,size_t end) {
+            for (size_t i=begin; i<end;) {
+                size_t ai=0,bi=0;
+                for (size_t d=0; d+1<rank; ++d) {
+                    size_t coordinate=i/ys[d]%y.shape[d];
+                    if (d>=da && a.shape[d-da]!=1) ai+=coordinate*as[d-da];
+                    if (d>=db && b.shape[d-db]!=1) bi+=coordinate*bs[d-db];
+                }
+                size_t col=i%width, count=std::min(end-i,width-col);
+                for (size_t j=0; j<count; ++j) {
+                    float l=a.data[ai+(sa ? 0 : col+j)], r=b.data[bi+(sb ? 0 : col+j)];
+                    y.data[i+j]=op==0 ? l+r : op==1 ? l-r : op==2 ? l*r : l/r;
+                }
+                i+=count;
+            }
+        });
+        return;
+    }
     ctx.ranges(y.size(), [&](size_t begin, size_t end) {
       for (size_t i = begin; i < end; ++i) {
         size_t ai = 0, bi = 0;
@@ -131,6 +154,7 @@ void split(Context&, const Tensor& x, std::initializer_list<Tensor*> outputs, in
     }
 }
 void transpose(Context& ctx, const Tensor& x, Tensor& y, std::initializer_list<int> permutation) {
+    if (ctx.optimized && transpose_opt(ctx,x,y,permutation)) return;
     auto xs = strides(x.shape), ys = strides(y.shape);
     ctx.ranges(y.size(), [&](size_t begin, size_t end) {
         for (size_t i = begin; i < end; ++i) {

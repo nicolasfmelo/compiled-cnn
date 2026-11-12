@@ -79,6 +79,7 @@ void maxpool(Context&, const Tensor&, Tensor&);
 void resize(Context&, const Tensor&, Tensor&);
 void concat(Context&, std::initializer_list<const Tensor*>, Tensor&, int);
 void split(Context&, const Tensor&, std::initializer_list<Tensor*>, int, std::initializer_list<std::pair<int,int>>);
+bool transpose_opt(Context&, const Tensor&, Tensor&, std::initializer_list<int>);
 void transpose(Context&, const Tensor&, Tensor&, std::initializer_list<int>);
 void matmul(Context&, const Tensor&, const Tensor&, Tensor&);
 void softmax(Context&, const Tensor&, Tensor&, int);
