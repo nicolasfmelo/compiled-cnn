@@ -5,6 +5,8 @@
 
 namespace {
 std::mt19937 rng(97);
+int threads = 1;
+std::vector<int> cpus{0};
 struct Buffer {
     std::vector<float> storage;
     engine::Tensor t;
@@ -25,7 +27,7 @@ void convolution(int ic, int oc, int h, int width, int kernel, int stride, int g
     int k = ic/group*kernel*kernel;
     std::vector<float> packed((oc+3)/4*k*4, 0);
     for (int c = 0; c < oc; ++c) for (int z = 0; z < k; ++z) packed[(c/4*k+z)*4+c%4] = w.storage[c*k+z];
-    engine::Context ctx(true,1,{0});
+    engine::Context ctx(true,threads,cpus);
     engine::ConvParams p{kernel,kernel,stride,stride,pad,pad,group,activation};
     engine::conv_ref(x.t,w.t,b.t,ref.t,p);
     engine::conv(ctx,x.t,w.t,b.t,opt.t,p,packed.data());
@@ -36,9 +38,12 @@ void convolution(int ic, int oc, int h, int width, int kernel, int stride, int g
     equal(ref,opt,2e-4f);
 }
 }
-int main() {
+int main(int argc, char** argv) {
     try {
-        engine::Context ref(false,1,{0}), opt(true,1,{0});
+        if (argc == 2) threads = std::stoi(argv[1]);
+        cpus.clear();
+        for (int i = 0; i < threads; ++i) cpus.push_back(i*2);
+        engine::Context ref(false,1,{0}), opt(true,threads,cpus);
         double max_relative = 0;
         alignas(32) float xs[8], ys[8];
         for (int i = 0; i <= 1000000; i += 8) {
@@ -54,7 +59,7 @@ int main() {
         for (int kernel : {1,3}) for (int stride : {1,2}) for (bool act : {false,true}) {
             convolution(7,9,9,19,kernel,stride,1,act);
             convolution(17,8,13,23,kernel,stride,1,act);
-            convolution(65,5,3,71,kernel,stride,1,act); // K and N panel tails
+            convolution(65,5,9,71,kernel,stride,1,act); // K and N panel tails
         }
         for (int kernel : {3,7}) for (int stride : {1,2}) for (bool act : {false,true})
             convolution(5,5,9,37,kernel,stride,5,act);
@@ -72,17 +77,28 @@ int main() {
             engine::matmul(ref,a.t,b.t,r.t); engine::matmul(opt,a.t,b.t,o.t); equal(r,o);
         }
         for (int axis : {1,3}) {
-            Buffer x({1,3,5,17}), r({1,3,5,17}), o({1,3,5,17});
+            Buffer x({1,3,5,269}), r({1,3,5,269}), o({1,3,5,269});
             engine::softmax(ref,x.t,r.t,axis); engine::softmax(opt,x.t,o.t,axis); equal(r,o);
         }
         for (int activation : {0,1}) {
-            Buffer x({1,3,5,17}), r({1,3,5,17}), o({1,3,5,17});
+            Buffer x({1,3,51,137}), r({1,3,51,137}), o({1,3,51,137});
             engine::unary(ref,x.t,r.t,activation); engine::unary(opt,x.t,o.t,activation); equal(r,o);
         }
         for (int op = 0; op < 4; ++op) for (bool scalar : {false,true}) {
             Buffer a({1,3,5,17}), b(scalar ? std::vector<int>{1} : a.t.shape), r(a.t.shape), o(a.t.shape);
             for (float& v : b.storage) v = std::abs(v)+0.2f;
             engine::binary(ref,a.t,b.t,r.t,op); engine::binary(opt,a.t,b.t,o.t,op); equal(r,o);
+        }
+        for (int op = 0; op < 4; ++op) {
+            Buffer a({1,3,17,137}), b({1,1,17,137}), r(a.t.shape), o(a.t.shape);
+            for (float& v : b.storage) v = std::abs(v)+0.2f;
+            engine::binary(ref,a.t,b.t,r.t,op); engine::binary(opt,a.t,b.t,o.t,op); equal(r,o);
+        }
+        {
+            Buffer x({1,3,17,137}), r({1,3,137,17}), o(r.t.shape);
+            engine::transpose(ref,x.t,r.t,{0,1,3,2}); engine::transpose(opt,x.t,o.t,{0,1,3,2}); equal(r,o,0);
+            Buffer rr({1,17,3,137}), oo(rr.t.shape);
+            engine::transpose(ref,x.t,rr.t,{0,2,1,3}); engine::transpose(opt,x.t,oo.t,{0,2,1,3}); equal(rr,oo,0);
         }
         if (engine::sigmoid(-100.f) <= 0 || !std::isfinite(engine::silu(-100.f)) || !std::signbit(engine::silu(-1000.f)))
             throw std::runtime_error("activation extreme");

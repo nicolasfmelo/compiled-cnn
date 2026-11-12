@@ -1,4 +1,5 @@
 #pragma once
+#include "thread_pool.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -32,10 +33,18 @@ public:
 struct Context {
     bool optimized, profiling = false;
     std::map<std::string, double> profile;
-    std::vector<float> scratch = std::vector<float>(512*9*64);
-    Context(bool opt, int threads, const std::vector<int>& cpus) : optimized(opt) {
-        (void)cpus;
-        if (threads != 1) throw std::runtime_error("this milestone supports one thread only");
+    ThreadPool pool;
+    std::vector<std::vector<float>> scratch;
+    Context(bool opt, int threads, const std::vector<int>& cpus) : optimized(opt), pool(threads, cpus),
+        scratch(threads, std::vector<float>(512*9*64)) {
+        if (!opt && threads != 1) throw std::runtime_error("reference implementation is single-threaded");
+    }
+    template<class F> void ranges(size_t size, F&& f) {
+        if (!optimized) { f(0,size); return; }
+        pool.parallel((size+4095)/4096, [&](size_t job, int) {
+            size_t start = job*4096;
+            f(start,std::min(size,start+4096));
+        });
     }
     template<class F> void run(const char* kind, F&& f) {
         if (!profiling) { f(); return; }
@@ -58,7 +67,7 @@ void resize_opt(const Tensor&, Tensor&);
 void matmul_opt(const Tensor&, const Tensor&, Tensor&);
 void conv(Context&, const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams, const float*, const Tensor* residual = nullptr);
 void unary_opt(const Tensor&, Tensor&, int);
-void softmax_opt(const Tensor&, Tensor&, int);
+void softmax_opt(Context&, const Tensor&, Tensor&, int);
 void unary(Context&, const Tensor&, Tensor&, int);
 void binary(Context&, const Tensor&, const Tensor&, Tensor&, int);
 void maxpool(Context&, const Tensor&, Tensor&);

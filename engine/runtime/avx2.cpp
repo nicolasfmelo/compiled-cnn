@@ -84,23 +84,34 @@ static void depthwise(const Tensor& x, const Tensor& w, const Tensor& b, Tensor&
 }
 
 void conv_opt(Context& ctx, const Tensor& x, const Tensor& w, const Tensor& b, Tensor& y, ConvParams p, const float* packed, const Tensor* residual) {
-    if (p.group == x.shape[1] && y.shape[1] == x.shape[1]) { depthwise(x,w,b,y,p,residual); return; }
+    if (p.group == x.shape[1] && y.shape[1] == x.shape[1]) {
+        int ih = x.shape[2], iw = x.shape[3], oh = y.shape[2], ow = y.shape[3];
+        ctx.pool.parallel(y.shape[1], [&](size_t c, int) {
+            Tensor xx{x.data+c*ih*iw,{1,1,ih,iw}}, ww{w.data+c*p.kh*p.kw,{1,1,p.kh,p.kw}}, bb{b.data+c,{1}}, yy{y.data+c*oh*ow,{1,1,oh,ow}};
+            Tensor rr{residual ? residual->data+c*oh*ow : nullptr, yy.shape};
+            auto q = p; q.group = 1;
+            depthwise(xx,ww,bb,yy,q,residual ? &rr : nullptr);
+        });
+        return;
+    }
     if (p.group != 1) { conv_ref(x,w,b,y,p,residual); return; }
     int ic = x.shape[1], ih = x.shape[2], iw = x.shape[3];
     int oc = y.shape[1], oh = y.shape[2], ow = y.shape[3], n = oh*ow, k = ic*p.kh*p.kw;
     constexpr int nb = 64, kb = 128;
-    if (ctx.scratch.size() < static_cast<size_t>(k*nb)) throw std::runtime_error("im2col scratch too small");
+    if (ctx.scratch[0].size() < static_cast<size_t>(k*nb)) throw std::runtime_error("im2col scratch too small");
     bool direct = p.kh == 1 && p.kw == 1 && p.sy == 1 && p.sx == 1 && p.py == 0 && p.px == 0;
-    for (int pos = 0; pos < n; pos += nb) {
+    ctx.pool.parallel((n+nb-1)/nb, [&](size_t job, int worker) {
+        int pos = static_cast<int>(job)*nb;
+        float* scratch = ctx.scratch[worker].data();
         int count = std::min(nb, n-pos), bs = direct ? n : nb;
-        const float* panel = direct ? x.data+pos : ctx.scratch.data();
+        const float* panel = direct ? x.data+pos : scratch;
         if (!direct) {
             int base_y[nb], base_x[nb];
             for (int j = 0; j < count; ++j) { base_y[j] = (pos+j)/ow*p.sy-p.py; base_x[j] = (pos+j)%ow*p.sx-p.px; }
             for (int c = 0; c < ic; ++c)
                 for (int ky = 0; ky < p.kh; ++ky)
                     for (int kx = 0; kx < p.kw; ++kx) {
-                        float* row = ctx.scratch.data()+((c*p.kh+ky)*p.kw+kx)*nb;
+                        float* row = scratch+((c*p.kh+ky)*p.kw+kx)*nb;
                         for (int j = 0; j < count; ++j) {
                             int sy = base_y[j]+ky, sx = base_x[j]+kx;
                             row[j] = sy >= 0 && sy < ih && sx >= 0 && sx < iw ? x.data[(c*ih+sy)*iw+sx] : 0;
@@ -127,7 +138,7 @@ void conv_opt(Context& ctx, const Tensor& x, const Tensor& w, const Tensor& b, T
                     }
             }
         }
-    }
+    });
 }
 void maxpool_opt(const Tensor& x, Tensor& y) {
     int h = x.shape[2], w = x.shape[3];
@@ -177,15 +188,17 @@ void unary_opt(const Tensor& x, Tensor& y, int activation) {
     }
     for (; i < size; ++i) y.data[i] = activation ? silu(x.data[i]) : sigmoid(x.data[i]);
 }
-void softmax_opt(const Tensor& x, Tensor& y, int axis) {
+void softmax_opt(Context& ctx, const Tensor& x, Tensor& y, int axis) {
     size_t inner = 1, outer = 1;
     for (int i = 0; i < axis; ++i) outer *= x.shape[i];
     for (size_t i = axis+1; i < x.shape.size(); ++i) inner *= x.shape[i];
     const int n = x.shape[axis];
-    for (size_t o = 0; o < outer; ++o) {
-        size_t i = 0;
+    const size_t tiles = (inner+127)/128;
+    ctx.pool.parallel(outer*tiles, [&](size_t job, int) {
+        const size_t o = job/tiles, start = (job%tiles)*128, end = std::min(inner,start+128);
+        size_t i = start;
         // DFL: eight independent reductions in the spatial dimension.
-        for (; i+8 <= inner; i += 8) {
+        for (; i+8 <= end; i += 8) {
             size_t base = o*n*inner+i;
             __m256 maximum = _mm256_set1_ps(-std::numeric_limits<float>::infinity());
             for (int c = 0; c < n; ++c) maximum = _mm256_max_ps(maximum,_mm256_loadu_ps(x.data+base+c*inner));
@@ -196,7 +209,7 @@ void softmax_opt(const Tensor& x, Tensor& y, int axis) {
             }
             for (int c = 0; c < n; ++c) _mm256_storeu_ps(y.data+base+c*inner,_mm256_div_ps(_mm256_loadu_ps(y.data+base+c*inner),sum));
         }
-        for (; i < inner; ++i) {
+        for (; i < end; ++i) {
             size_t base = o*n*inner+i;
             float maximum = -std::numeric_limits<float>::infinity(), sum = 0;
             for (int c = 0; c < n; ++c) maximum = std::max(maximum,x.data[base+c*inner]);
@@ -212,7 +225,7 @@ void softmax_opt(const Tensor& x, Tensor& y, int axis) {
             for (; c < n; ++c) { float e = std::exp(x.data[base+c*inner]-maximum); y.data[base+c*inner] = e; sum += e; }
             for (c = 0; c < n; ++c) y.data[base+c*inner] /= sum;
         }
-    }
+    });
 }
 void matmul_opt(const Tensor& a, const Tensor& b, Tensor& y) {
     int m = a.shape[2], k = a.shape[3], n = b.shape[3];

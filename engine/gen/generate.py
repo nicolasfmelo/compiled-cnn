@@ -370,7 +370,7 @@ public:
         elif values[r].constant is not None: pointer = f'const_cast<float*>(engine_weights + {weights[r]+off})'
         else: pointer = f'arena_.data() + {offsets[r]+off}'
         lines.append(f' t_[{ids[name]}] = Tensor{{{pointer}, {{{", ".join(map(str, v.shape))}}}}};')
-    lines += ['}', 'const float* Model::forward(const float* input) {', f' t_[{ids[model.graph.input[0].name]}].data = const_cast<float*>(input);']
+    lines += ['}', 'const float* Model::forward(const float* input) {', ' ThreadPool::Session session(ctx.pool);', f' t_[{ids[model.graph.input[0].name]}].data = const_cast<float*>(input);']
     plan = [f'stage: M{stage}', f'arena bytes: {arena_size*4}', f'weights bytes: {len(blob)}', 'layout: contiguous NCHW (ONNX row-major for attention/head)', 'Resize: nearest/asymmetric/floor x2', f'zero-copy concats: {len(views)}']
     macs = sum(op.get('macs', 0) for op in ops)
     plan += [f'MACs: {macs}', f'FLOPs (2 x MACs): {macs*2}', '']
@@ -415,7 +415,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--input', type=Path, default=ROOT/'artifacts/engine/yolov10s_raw.onnx')
     p.add_argument('--output', type=Path, default=ROOT/'artifacts/engine/generated')
-    p.add_argument('--stage', type=int, choices=(1, 2, 3, 4), default=3)
+    p.add_argument('--stage', type=int, choices=(1, 2, 3, 4), default=4)
     args = p.parse_args()
     try:
         compile_graph(args.input, args.output, args.stage)

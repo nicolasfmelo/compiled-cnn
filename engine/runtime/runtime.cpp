@@ -28,7 +28,13 @@ void conv(Context& ctx, const Tensor& x, const Tensor& w, const Tensor& b, Tenso
     else conv_ref(x, w, b, y, p, residual);
 }
 void unary(Context& ctx, const Tensor& x, Tensor& y, int activation) {
-    if (ctx.optimized) { unary_opt(x,y,activation); return; }
+    if (ctx.optimized) {
+        ctx.ranges(x.size(), [&](size_t begin, size_t end) {
+            Tensor xx{x.data+begin,{static_cast<int>(end-begin)}}, yy{y.data+begin,xx.shape};
+            unary_opt(xx,yy,activation);
+        });
+        return;
+    }
     const size_t size = x.size();
     for (size_t i = 0; i < size; ++i) y.data[i] = activation ? silu(x.data[i]) : sigmoid(x.data[i]);
 }
@@ -40,15 +46,18 @@ static std::vector<size_t> strides(const std::vector<int>& shape) {
 void binary(Context& ctx, const Tensor& a, const Tensor& b, Tensor& y, int op) {
     if (ctx.optimized && (a.size() == y.size() || a.size() == 1) && (b.size() == y.size() || b.size() == 1)) {
         const bool sa = a.size() == 1, sb = b.size() == 1;
-        for (size_t i = 0; i < y.size(); ++i) {
-            float l = a.data[sa ? 0 : i], r = b.data[sb ? 0 : i];
-            y.data[i] = op == 0 ? l+r : op == 1 ? l-r : op == 2 ? l*r : l/r;
-        }
+        ctx.ranges(y.size(), [&](size_t begin, size_t end) {
+            for (size_t i = begin; i < end; ++i) {
+                float l = a.data[sa ? 0 : i], r = b.data[sb ? 0 : i];
+                y.data[i] = op == 0 ? l+r : op == 1 ? l-r : op == 2 ? l*r : l/r;
+            }
+        });
         return;
     }
     auto as = strides(a.shape), bs = strides(b.shape), ys = strides(y.shape);
     size_t rank = y.shape.size(), da = rank-a.shape.size(), db = rank-b.shape.size();
-    for (size_t i = 0; i < y.size(); ++i) {
+    ctx.ranges(y.size(), [&](size_t begin, size_t end) {
+      for (size_t i = begin; i < end; ++i) {
         size_t ai = 0, bi = 0;
         for (size_t d = 0; d < rank; ++d) {
             size_t coord = i/ys[d] % y.shape[d];
@@ -57,10 +66,18 @@ void binary(Context& ctx, const Tensor& a, const Tensor& b, Tensor& y, int op) {
         }
         float l = a.data[ai], r = b.data[bi];
         y.data[i] = op == 0 ? l+r : op == 1 ? l-r : op == 2 ? l*r : l/r;
-    }
+      }
+    });
 }
 void maxpool(Context& ctx, const Tensor& x, Tensor& y) {
-    if (ctx.optimized) { maxpool_opt(x, y); return; }
+    if (ctx.optimized) {
+        int h = x.shape[2], w = x.shape[3];
+        ctx.pool.parallel(x.shape[1], [&](size_t c, int) {
+            Tensor xx{x.data+c*h*w,{1,1,h,w}}, yy{y.data+c*h*w,xx.shape};
+            maxpool_opt(xx,yy);
+        });
+        return;
+    }
     int c = x.shape[1], h = x.shape[2], w = x.shape[3];
     for (int ch = 0; ch < c; ++ch)
         for (int row = 0; row < h; ++row)
@@ -74,7 +91,14 @@ void maxpool(Context& ctx, const Tensor& x, Tensor& y) {
             }
 }
 void resize(Context& ctx, const Tensor& x, Tensor& y) {
-    if (ctx.optimized) { resize_opt(x, y); return; }
+    if (ctx.optimized) {
+        int h = x.shape[2], w = x.shape[3];
+        ctx.pool.parallel(x.shape[1], [&](size_t c, int) {
+            Tensor xx{x.data+c*h*w,{1,1,h,w}}, yy{y.data+c*h*w*4,{1,1,h*2,w*2}};
+            resize_opt(xx,yy);
+        });
+        return;
+    }
     int h = x.shape[2], w = x.shape[3];
     for (int c = 0; c < x.shape[1]; ++c)
         for (int row = 0; row < h*2; ++row)
@@ -106,16 +130,26 @@ void split(Context&, const Tensor& x, std::initializer_list<Tensor*> outputs, in
             std::memcpy(y->data+o*n*inner, x.data+(o*x.shape[axis]+start)*inner, n*inner*sizeof(float));
     }
 }
-void transpose(Context&, const Tensor& x, Tensor& y, std::initializer_list<int> permutation) {
+void transpose(Context& ctx, const Tensor& x, Tensor& y, std::initializer_list<int> permutation) {
     auto xs = strides(x.shape), ys = strides(y.shape);
-    for (size_t i = 0; i < y.size(); ++i) {
-        size_t src = 0, d = 0;
-        for (int p : permutation) { src += (i/ys[d] % y.shape[d])*xs[p]; ++d; }
-        y.data[i] = x.data[src];
-    }
+    ctx.ranges(y.size(), [&](size_t begin, size_t end) {
+        for (size_t i = begin; i < end; ++i) {
+            size_t src = 0, d = 0;
+            for (int p : permutation) { src += (i/ys[d] % y.shape[d])*xs[p]; ++d; }
+            y.data[i] = x.data[src];
+        }
+    });
 }
 void matmul(Context& ctx, const Tensor& a, const Tensor& b, Tensor& y) {
-    if (ctx.optimized) { matmul_opt(a, b, y); return; }
+    if (ctx.optimized) {
+        int m = a.shape[2], k = a.shape[3], n = b.shape[3];
+        ctx.pool.parallel(a.shape[0]*a.shape[1]*m, [&](size_t row, int) {
+            size_t batch = row/m;
+            Tensor aa{a.data+row*k,{1,1,1,k}}, bb{b.data+batch*k*n,{1,1,k,n}}, yy{y.data+row*n,{1,1,1,n}};
+            matmul_opt(aa,bb,yy);
+        });
+        return;
+    }
     int m = a.shape[2], k = a.shape[3], n = b.shape[3];
     int batches = a.shape[0]*a.shape[1];
     for (int batch = 0; batch < batches; ++batch)
@@ -127,7 +161,7 @@ void matmul(Context& ctx, const Tensor& a, const Tensor& b, Tensor& y) {
             }
 }
 void softmax(Context& ctx, const Tensor& x, Tensor& y, int axis) {
-    if (ctx.optimized) { softmax_opt(x,y,axis); return; }
+    if (ctx.optimized) { softmax_opt(ctx,x,y,axis); return; }
     size_t inner = 1, outer = 1;
     for (int i = 0; i < axis; ++i) outer *= x.shape[i];
     for (size_t i = axis+1; i < x.shape.size(); ++i) inner *= x.shape[i];
