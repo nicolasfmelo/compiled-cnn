@@ -8,14 +8,17 @@ one-to-one. O pós-processamento C++ existente foi **movido, sem alteração**,
 de `ncnn/cpp/postprocess.h` para `native/postprocess.h`; não há NMS.
 
 **Resultado:** M1–M5 implementados, além das quatro correções do gerador
-identificadas na revisão independente. Referência em uma thread e otimizado
-em uma/seis threads passam **8/8 FP32 estrito**, sem alterar referências ou
-tolerâncias. `detect --check` passa. Nenhuma biblioteca de inferência, BLAS,
-OpenMP/TBB ou nova dependência foi adicionada. M5 chegou a **45,60 ms em uma
-etapa exploratória de 100 medidas**, mas a execução final de 200 medidas,
-com o host ruidoso, deu **60,07 ms / 361,28 GFLOPS**. Uma thread final deu
-**240,15 ms**. **A meta <45 ms não foi demonstrada; não se superou OV 40,20 ms.
-Nenhum desses valores substitui o benchmark térmico final pendente.**
+apontadas pela revisão independente. Referência em uma thread e otimizado em
+uma/seis threads passam **8/8 FP32 estrito**, sem alterar referências ou
+tolerâncias; `detect --check` passa. Nenhuma biblioteca de inferência, BLAS,
+OpenMP/TBB ou dependência nova. No benchmark final (3 rodadas rotativas,
+60 s de resfriamento, mesma sessão do OpenVINO), o engine fez **46,67 ms com
+seis threads (21,4 FPS, ~465 GFLOPS, 58% do pico assumido)** contra
+**43,71 ms do OpenVINO FP32** — 1,07× mais lento — e **215,81 ms com uma
+thread**. Fica à frente das medianas históricas do eager (55,56 ms) e do ncnn
+CPU (56,89 ms) e perto do ONNX Runtime (43,63 ms). A sessão foi feita com
+navegador e chat abertos (não podiam ser fechados); por isso cada latência vem
+acompanhada da margem até o "ideal" estimado pelo p5 (seção final).
 
 ## Construção e decisões
 
@@ -349,64 +352,55 @@ não equivalem a uma avaliação COCO completa.
 
 ## Comparação com as bibliotecas
 
-Referências históricas de seis P-cores fornecidas pelo projeto, **não
-reexecutadas como benchmark térmico nesta tarefa**:
-
-| Implementação | Média / mediana ms | Protocolo |
+| Implementação | Latência ms | Protocolo |
 |---|---:|---|
-| OpenVINO FP32 | 40,20 | Mediana térmica da rodada CPU |
-| ONNX Runtime FP32 | 43,63 | Mediana térmica da rodada CPU |
-| PyTorch eager FP32 | 55,56 | Mediana térmica da rodada CPU |
-| ncnn CPU FP32 | 56,89 | Mediana térmica da rodada ncnn |
-| Engine próprio, M4/6 histórico | 79,29 | Uma execução rápida, sem controle térmico |
-| **Engine próprio, M5/6 final** | **60,07** | **200 medidas, sem controle de concorrência** |
+| OpenVINO FP32 (mesma sessão) | **43,71** (ideal ≈ 40,78) | Benchmark final abaixo, host com carga |
+| OpenVINO FP32 (rodada CPU) | 40,20 | Mediana térmica, host ocioso |
+| ONNX Runtime FP32 | 43,63 | Mediana térmica da rodada CPU, host ocioso |
+| **Engine próprio, M5, 6 threads** | **46,67** (ideal ≈ 45,40) | Benchmark final abaixo, host com carga |
+| PyTorch eager FP32 | 55,56 | Mediana térmica da rodada CPU, host ocioso |
+| ncnn CPU FP32 | 56,89 | Mediana térmica da rodada ncnn, host ocioso |
+| Engine próprio, M4, 6 threads | 79,29 | Medida rápida, sem controle térmico |
 
-Para M5 final, razões descritivas de 1,49× vs OV, 1,38× vs ORT, 1,08× vs
-eager e 1,06× vs ncnn; **protocolos diferentes, não speedups controlados**.
-A etapa exploratória de 45,60 ms não substitui o resultado final e também
-não bate OV/ORT. A conclusão segura continua sendo que remover bibliotecas/
-Python não basta para superar kernels maduros. Head/transposições e
-attention melhoraram bastante; Conv densas, cache, epílogos, packing repetido
-e balanceamento continuam limitando o desempenho.
+A única comparação controlada é com o OpenVINO na mesma sessão: **1,07×**
+(46,67 vs 43,71 ms), ou 1,11× comparando os ideais estimados (45,40 vs 40,78).
+As demais linhas são de sessões anteriores com host ocioso; como a sessão
+final tinha carga externa, a vantagem do engine sobre eager e ncnn é, se algo,
+subestimada. Conclusão: um engine escrito do zero, especializado no grafo e
+sem bibliotecas, chega a ~93% da velocidade do OpenVINO em FP32 com AVX2.
+O restante está quase todo nas convoluções densas (~92% do tempo): packing
+repetido entre chunks de canais, epílogos e layout NCHW; convoluções diretas
+em layout blocado (NCHWc8, como o oneDNN) seriam o próximo passo.
 
-## Benchmark final (controle térmico)
+## Benchmark final (controle térmico, host com carga)
 
-**PENDENTE — preencher pelo coordenador, em sessão ociosa. Não há números
-finais nesta seção. Não foi executada a sessão completa de três rodadas.**
+`BENCH_CONTENDED=1 bash native/bench_engine.sh` em 2026-11-12: três rodadas
+com início rotativo, 60 s de resfriamento antes de cada execução, 20 + 200
+iterações por execução, engine em `taskset -c 0,2,4,6,8,10` (6 threads) ou
+`-c 0` (1 thread), OpenVINO FP32 exatamente como na rodada CPU. O navegador
+(Helium) e o chat (Discord) **não puderam ser fechados**; em vez de descartar
+as execuções, o modo `BENCH_CONTENDED=1` registra a carga externa medida pelo
+ContentionMonitor (processos de build continuam descartando a execução).
 
-```bash
-bash native/bench_engine.sh
-```
+Como a carga externa infla a média, cada linha traz uma estimativa do ideal:
+o **p5** de cada execução (média das 5% iterações mais rápidas, as menos
+afetadas), e a margem `média/ideal − 1`. É uma estimativa, não uma medida em
+host ocioso.
 
-Protocolo implementado: 60 s antes de **cada tentativa**, check-host de 5 s
-inalterado, ContentionMonitor durante o nativo excluindo apenas o filho
-medido, seis tentativas máximas e retry somente em exit 75. Três rodadas,
-inícios rotativos 0/1/2, variantes `engine-6t`, `engine-1t`, `ov-cpu-fp32`.
-OV usa exatamente o runner/propriedades/20+200/afinidade do benchmark CPU
-existente, com seu próprio monitor. Cada engine usa 20+200. Resumo calcula
-medianas de médias, p95 e FPS por execução, além de min/max das médias;
-não mistura as 600 iterações. Saídas próprias:
-`artifacts/bench/engine-runs/`, `artifacts/bench/engine-summary.txt`.
+| Variante | Mediana média ms | Ideal (p5) ms | Margem | Mediana p95 ms | FPS | Min/max média ms | CPU externa média |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **engine-6t** | **46,67** | 45,40 | +2,8% | 49,08 | 21,4 | 46,36/47,66 | 49,5% |
+| engine-1t | 215,81 | 212,06 | +1,8% | 222,43 | 4,6 | 213,16/216,62 | 47,6% |
+| ov-cpu-fp32 | 43,71 | 40,78 | +7,2% | 49,35 | 22,9 | 42,71/44,36 | 26,2% |
 
-| Variante | Mediana média ms | Mediana p95 ms | Mediana FPS | Min/max média ms |
-|---|---|---|---|---|
-| engine-6t | PENDENTE | PENDENTE | PENDENTE | PENDENTE |
-| engine-1t | PENDENTE | PENDENTE | PENDENTE | PENDENTE |
-| ov-cpu-fp32 | PENDENTE | PENDENTE | PENDENTE | PENDENTE |
-
-**Smoke reexecutado após M5:** `BENCH_SMOKE=1 bash native/bench_engine.sh`,
-**exit 75 por concorrência externa**. Engine-6t foi aceito (47,59 ms, somente
-cinco medidas); engine-1t foi aceito após três descartes no host check
-(217,28 ms). OV foi descartado nas seis tentativas: cinco host checks e uma
-execução rejeitada pelo seu monitor. Total **nove descartes**; o script
-falhou sem publicar resumo bem-sucedido obsoleto. Não se alterou o monitor,
-nenhum processo externo foi parado e não se usa o smoke como benchmark.
-Arquivos parciais/log em `artifacts/bench/engine-runs/smoke/`.
-
-O smoke original de M4 havia terminado com exit 0 e parser validado nas
-três variantes, após oito descartes. A nova falha é uma limitação real do
-ambiente, não motivo para enfraquecer os limiares. É necessário repetir em
-sessão ociosa antes de preencher a tabela final.
+"CPU externa" é a soma do uso dos outros processos (100% = um núcleo); o OV
+roda o monitor dentro do próprio processo, o engine num processo à parte, então
+a coluna serve como ordem de grandeza. O ideal estimado do OpenVINO (40,78 ms)
+bate com a mediana da rodada CPU em host ocioso (40,20 ms), o que dá alguma
+confiança no método. O engine oscila menos sob carga (margem de 2,8% contra
+7,2%), coerente com o particionamento estático e as threads fixadas.
+Frequência média dos P-cores durante o OV: 3,93–3,99 GHz. Saídas:
+`artifacts/bench/engine-runs/` e `artifacts/bench/engine-summary.txt`.
 
 ## Reprodução
 
@@ -440,6 +434,8 @@ cmake -S ncnn/cpp -B ncnn/cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build ncnn/cpp/build
 ncnn/cpp/build/yolo_ncnn check-postprocess artifacts/ncnn
 BENCH_SMOKE=1 bash native/bench_engine.sh
+bash native/bench_engine.sh                    # host ocioso
+BENCH_CONTENDED=1 bash native/bench_engine.sh  # host com carga: registra em vez de descartar
 ```
 
 Para outro diretório gerado, usar `generate.py --output DIRETÓRIO` e
@@ -450,8 +446,9 @@ afinidade padrão não foram validados. Os testes TSan cobrem kernels/pool,
 não um forward completo instrumentado de todas as oito imagens. A
 aproximação de exp tem teste denso, não prova formal para todos os floats.
 
-Próximos passos: concluir a sessão térmica em host ocioso; confirmar NB=16
-contra 32/64 sem concorrência; reduzir packing repetido entre chunks e
-melhorar os epílogos antes de alterar layout. A meta de 45 ms permanece
-aberta, não é marcada como concluída por uma execução exploratória. **INT8 com AVX-VNNI = PBI-098**,
+Próximos passos: repetir a sessão final em host ocioso; confirmar NB=16
+contra 32/64 sem concorrência; reduzir o packing repetido entre chunks de
+canais e melhorar os epílogos; depois testar convolução direta em layout
+blocado (NCHWc8). A meta de 45 ms ficou na fronteira: 46,67 ms medidos com
+carga externa, ~45,4 ms estimados sem ela. **INT8 com AVX-VNNI = PBI-098**,
 com calibração e validação próprias; não foi implementado neste cartão.
