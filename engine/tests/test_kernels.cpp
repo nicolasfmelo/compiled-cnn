@@ -1,4 +1,5 @@
 #include "runtime.h"
+#include "exp_avx2.h"
 #include <iostream>
 #include <random>
 
@@ -29,11 +30,27 @@ void convolution(int ic, int oc, int h, int width, int kernel, int stride, int g
     engine::conv_ref(x.t,w.t,b.t,ref.t,p);
     engine::conv(ctx,x.t,w.t,b.t,opt.t,p,packed.data());
     equal(ref,opt,2e-4f);
+    Buffer residual(ref.t.shape);
+    engine::conv_ref(x.t,w.t,b.t,ref.t,p,&residual.t);
+    engine::conv(ctx,x.t,w.t,b.t,opt.t,p,packed.data(),&residual.t);
+    equal(ref,opt,2e-4f);
 }
 }
 int main() {
     try {
         engine::Context ref(false,1,{0}), opt(true,1,{0});
+        double max_relative = 0;
+        alignas(32) float xs[8], ys[8];
+        for (int i = 0; i <= 1000000; i += 8) {
+            for (int j = 0; j < 8; ++j) xs[j] = -88.f+176.f*std::min(i+j,1000000)/1000000.f;
+            _mm256_store_ps(ys,engine::exp8(_mm256_load_ps(xs)));
+            for (int j = 0; j < 8; ++j) max_relative = std::max(max_relative,std::abs(ys[j]/std::exp(static_cast<double>(xs[j]))-1));
+        }
+        std::cout << "exp8 [-88,88] max relative error=" << max_relative << '\n';
+        if (max_relative > 2e-7) throw std::runtime_error("exp8 relative error > 2e-7");
+        for (int j = 0; j < 8; ++j) xs[j] = j%2 ? -1000.f : -100.f;
+        _mm256_store_ps(ys,engine::silu8(_mm256_load_ps(xs)));
+        for (int j = 0; j < 8; ++j) if (!std::isfinite(ys[j]) || !std::signbit(ys[j])) throw std::runtime_error("silu8 extreme");
         for (int kernel : {1,3}) for (int stride : {1,2}) for (bool act : {false,true}) {
             convolution(7,9,9,19,kernel,stride,1,act);
             convolution(17,8,13,23,kernel,stride,1,act);

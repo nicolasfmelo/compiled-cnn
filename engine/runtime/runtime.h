@@ -51,12 +51,14 @@ inline float sigmoid(float x) {
     float e = std::exp(x); return e / (1.f + e);
 }
 inline float silu(float x) { return x * sigmoid(x); }
-void conv_ref(const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams);
-void conv_opt(Context&, const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams, const float*);
+void conv_ref(const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams, const Tensor* residual = nullptr);
+void conv_opt(Context&, const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams, const float*, const Tensor* residual);
 void maxpool_opt(const Tensor&, Tensor&);
 void resize_opt(const Tensor&, Tensor&);
 void matmul_opt(const Tensor&, const Tensor&, Tensor&);
-void conv(Context&, const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams, const float*);
+void conv(Context&, const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams, const float*, const Tensor* residual = nullptr);
+void unary_opt(const Tensor&, Tensor&, int);
+void softmax_opt(const Tensor&, Tensor&, int);
 void unary(Context&, const Tensor&, Tensor&, int);
 void binary(Context&, const Tensor&, const Tensor&, Tensor&, int);
 void maxpool(Context&, const Tensor&, Tensor&);

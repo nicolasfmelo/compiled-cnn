@@ -2,7 +2,7 @@
 #include <limits>
 
 namespace engine {
-void conv_ref(const Tensor& x, const Tensor& w, const Tensor& b, Tensor& y, ConvParams p) {
+void conv_ref(const Tensor& x, const Tensor& w, const Tensor& b, Tensor& y, ConvParams p, const Tensor* residual) {
     const int ic = x.shape[1], ih = x.shape[2], iw = x.shape[3];
     const int oc = y.shape[1], oh = y.shape[2], ow = y.shape[3];
     const int cg = ic/p.group, og = oc/p.group;
@@ -18,15 +18,19 @@ void conv_ref(const Tensor& x, const Tensor& w, const Tensor& b, Tensor& y, Conv
                                 sum += x.data[((o/og*cg+c)*ih+sy)*iw+sx] * w.data[((o*cg+c)*p.kh+ky)*p.kw+kx];
                         }
                 sum += b.data[o];
-                y.data[(o*oh+h)*ow+col] = p.silu ? silu(sum) : sum;
+                const size_t dst = (o*oh+h)*ow+col;
+                sum = p.silu ? silu(sum) : sum;
+                y.data[dst] = residual ? sum+residual->data[dst] : sum;
             }
 }
-void conv(Context& ctx, const Tensor& x, const Tensor& w, const Tensor& b, Tensor& y, ConvParams p, const float* packed) {
-    if (ctx.optimized) conv_opt(ctx, x, w, b, y, p, packed);
-    else conv_ref(x, w, b, y, p);
+void conv(Context& ctx, const Tensor& x, const Tensor& w, const Tensor& b, Tensor& y, ConvParams p, const float* packed, const Tensor* residual) {
+    if (ctx.optimized) conv_opt(ctx, x, w, b, y, p, packed, residual);
+    else conv_ref(x, w, b, y, p, residual);
 }
-void unary(Context&, const Tensor& x, Tensor& y, int activation) {
-    for (size_t i = 0; i < x.size(); ++i) y.data[i] = activation ? silu(x.data[i]) : sigmoid(x.data[i]);
+void unary(Context& ctx, const Tensor& x, Tensor& y, int activation) {
+    if (ctx.optimized) { unary_opt(x,y,activation); return; }
+    const size_t size = x.size();
+    for (size_t i = 0; i < size; ++i) y.data[i] = activation ? silu(x.data[i]) : sigmoid(x.data[i]);
 }
 static std::vector<size_t> strides(const std::vector<int>& shape) {
     std::vector<size_t> result(shape.size(), 1);
@@ -122,7 +126,8 @@ void matmul(Context& ctx, const Tensor& a, const Tensor& b, Tensor& y) {
                 y.data[(batch*m+i)*n+j] = v;
             }
 }
-void softmax(Context&, const Tensor& x, Tensor& y, int axis) {
+void softmax(Context& ctx, const Tensor& x, Tensor& y, int axis) {
+    if (ctx.optimized) { softmax_opt(x,y,axis); return; }
     size_t inner = 1, outer = 1;
     for (int i = 0; i < axis; ++i) outer *= x.shape[i];
     for (size_t i = axis+1; i < x.shape.size(); ++i) inner *= x.shape[i];

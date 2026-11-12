@@ -229,6 +229,28 @@ def compile_graph(source, destination, stage):
                 op['silu'] = 1
                 removed.add(id(act))
         ops = [op for op in ops if id(op) not in removed]
+        def fused_root(name):
+            while values[name].alias is not None:
+                name = values[name].alias
+            return name
+        uses = {k: [] for k in values}
+        for op in ops:
+            for x in op['inputs']: uses[fused_root(x)].append(op)
+        removed = set()
+        for op in ops:
+            if op['kind'] != 'Conv': continue
+            out = op['outputs'][0]
+            if len(uses[out]) != 1 or uses[out][0]['kind'] != 'Add': continue
+            add = uses[out][0]
+            if values[add['outputs'][0]].shape != values[out].shape: continue
+            residual = next((x for x in add['inputs'] if fused_root(x) != out), None)
+            if residual is None or values[residual].shape != values[out].shape: continue
+            op['residual'] = residual
+            # Include the extra read in liveness and descriptor generation.
+            op['inputs'].append(residual)
+            values[add['outputs'][0]].alias = out
+            removed.add(id(add))
+        ops = [op for op in ops if id(op) not in removed]
     # Resolve alias roots before allocation. Contiguous Concat can become a
     # union of disjoint producer slices if none of those roots is shared/repeated.
     def root(name):
@@ -359,7 +381,8 @@ public:
         category = 'other'
         if kind == 'Conv':
             args = ', '.join(str(op[k]) for k in ('kh', 'kw', 'sy', 'sx', 'py', 'px', 'group', 'silu'))
-            call = f'conv(ctx, {x}, {t(ins[1])}, {t(ins[2])}, {y}, {{{args}}}, engine_weights + {op["packed"]})'
+            residual = '&'+t(op['residual']) if 'residual' in op else 'nullptr'
+            call = f'conv(ctx, {x}, {t(ins[1])}, {t(ins[2])}, {y}, {{{args}}}, engine_weights + {op["packed"]}, {residual})'
             category = 'dwconv' if op['group'] > 1 else 'conv1x1' if op['kh'] == 1 else 'conv3x3s2' if op['sy'] == 2 else 'conv3x3'
         elif kind in ('Silu', 'Sigmoid'):
             call = f'unary(ctx, {x}, {y}, {1 if kind == "Silu" else 0})'
@@ -392,7 +415,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--input', type=Path, default=ROOT/'artifacts/engine/yolov10s_raw.onnx')
     p.add_argument('--output', type=Path, default=ROOT/'artifacts/engine/generated')
-    p.add_argument('--stage', type=int, choices=(1, 2, 3, 4), default=2)
+    p.add_argument('--stage', type=int, choices=(1, 2, 3, 4), default=3)
     args = p.parse_args()
     try:
         compile_graph(args.input, args.output, args.stage)
