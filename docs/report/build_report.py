@@ -79,6 +79,72 @@ def chart_cpu():
     return svg(fig)
 
 
+def _box(x, y, w, h, lines, color, bold_first=True):
+    out = [f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="7" fill="none" stroke="{color}" stroke-width="1.6"/>']
+    n = len(lines)
+    for i, line in enumerate(lines):
+        ty = y + h / 2 + (i - (n - 1) / 2) * 13 + 4
+        weight = "700" if (i == 0 and bold_first) else "400"
+        out.append(f'<text x="{x + w / 2}" y="{ty}" text-anchor="middle" font-size="10.5" '
+                   f'font-weight="{weight}" fill="{INK2}" font-family="DejaVu Sans">{line}</text>')
+    return "".join(out)
+
+
+def _arrow(x1, y1, x2, y2):
+    return (f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{MUTED}" stroke-width="1.2" '
+            f'marker-end="url(#arr)"/>')
+
+
+_DEFS = (f'<defs><marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">'
+         f'<path d="M0,0 L8,4 L0,8 z" fill="{MUTED}"/></marker></defs>')
+
+
+def flow_svg():
+    """Caminhos testados: do modelo treinado aos runners, todos na mesma validação."""
+    leaves = [("PyTorch eager (Python)", "referência e linha de base", BLUE),
+              ("AOTInductor → .pt2", "yolo_aoti (C++ + libtorch)", ORANGE),
+              ("TensorRT → .plan", "yolo_trt (C++ + libnvinfer)", AQUA),
+              ("ONNX Runtime · OpenVINO", "Python; OpenVINO INT8 via NNCF", BLUE),
+              ("pnnx → ncnn", "yolo_ncnn (C++ + Vulkan)", YELLOW),
+              ("gerador próprio → model.cpp", "yolo_engine (C++ sem bibliotecas)", ORANGE)]
+    parts = [_DEFS]
+    parts.append(_box(8, 128, 128, 56, ["YOLOv10s treinada", "PyTorch (.pt)", "camadas fundidas"], INK2))
+    parts.append(_box(168, 58, 112, 34, ["torch.export"], MUTED))
+    parts.append(_box(168, 218, 112, 34, ["ONNX (opset 18)"], MUTED))
+    ys = [10, 62, 114, 166, 218, 270]
+    for (title, sub, color), y in zip(leaves, ys):
+        parts.append(_box(316, y, 236, 40, [title, sub], color))
+        parts.append(_arrow(552, y + 20, 588, 156))
+    parts.append(_arrow(136, 140, 316, 30))
+    parts.append(_arrow(136, 150, 168, 75))
+    parts.append(_arrow(280, 75, 316, 82))
+    parts.append(_arrow(136, 170, 168, 235))
+    for y in ys[2:]:
+        parts.append(_arrow(280, 235, 316, y + 20))
+    parts.append(_box(590, 96, 122, 120, ["Mesma validação", "8 imagens vs", "referência eager", "", "Mesmo benchmark", "protocolo térmico"], INK2))
+    return (f'<svg viewBox="0 0 720 316" xmlns="http://www.w3.org/2000/svg" role="img" '
+            f'aria-label="Caminhos testados">{"".join(parts)}</svg>')
+
+
+def engine_svg():
+    """Pipeline do engine próprio: do ONNX ao executável."""
+    steps = [("ONNX bruto", ["grafo + pesos", "saída [8400, 84]"]),
+             ("Gerador (Python)", ["formas, fusões,", "plano de memória,", "pesos empacotados"]),
+             ("model.cpp + pesos", ["1 chamada por op", "pesos via .incbin", "(FP32 e INT8)"]),
+             ("Compilador C++", ["GCC -O3", "-march=x86-64-v3", "+ runtime próprio"]),
+             ("yolo_engine", ["um executável", "só libc/libstdc++", "AVX2 · AVX-VNNI"])]
+    parts = [_DEFS]
+    w, gap = 120, 27
+    for i, (title, sub) in enumerate(steps):
+        x = 6 + i * (w + gap)
+        color = ORANGE if i in (1, 4) else INK2
+        parts.append(_box(x, 8, w, 74, [title] + sub, color))
+        if i:
+            parts.append(_arrow(x - gap, 45, x, 45))
+    return (f'<svg viewBox="0 0 720 90" xmlns="http://www.w3.org/2000/svg" role="img" '
+            f'aria-label="Pipeline do engine próprio">{"".join(parts)}</svg>')
+
+
 CSS = """
 :root { --ink:#1f1f1e; --ink2:#4a4a48; --muted:#6f6f6c; --line:#e4e4e1; --zebra:#f6f6f4;
         --panel:#f1f5fb; --accent:#2a78d6; --bg:#ffffff; --warn:#b5520f; }
@@ -115,17 +181,22 @@ tr.best td { font-weight: 700; }
 .note { border-left: 3px solid var(--accent); background: var(--panel); padding: 10px 14px;
         border-radius: 0 8px 8px 0; margin: 12px 0; }
 .warn { color: var(--warn); font-weight: 700; }
+.summary { background: var(--panel); border-radius: 10px; padding: 12px 18px; margin: 14px 0; }
+.summary h3 { margin-top: 6px; }
+dl.gloss dt { font-weight: 700; margin-top: 8px; }
+dl.gloss dd { margin: 2px 0 0 0; color: var(--ink); }
 nav ol { columns: 2; font-size: 14px; padding-left: 20px; }
 @media (max-width: 640px) { .kpis { grid-template-columns: repeat(2, 1fr); } nav ol { columns: 1; } h1 { font-size: 24px; } }
 @page { size: A4; margin: 17mm 16mm 18mm;
-        @bottom-left { content: "PBI-095 · YOLOv10s compilada para runtimes nativos"; font: 8pt "DejaVu Sans"; color: #6f6f6c; }
+        @bottom-left { content: "PBI-095 / 097 / 098 · YOLOv10s compilada para runtimes nativos"; font: 8pt "DejaVu Sans"; color: #6f6f6c; }
         @bottom-right { content: "Página " counter(page) " de " counter(pages); font: 8pt "DejaVu Sans"; color: #6f6f6c; } }
 @media print {
   body { max-width: none; padding: 0; font-size: 9.6pt; line-height: 1.5; }
   h1 { font-size: 21pt; } h2 { font-size: 14pt; margin-top: 22px; break-after: avoid; }
   h3 { font-size: 11pt; break-after: avoid; }
   table { font-size: 8pt; } .kpi b { font-size: 15pt; } .kpi span { font-size: 8pt; }
-  .table-wrap, .figure, .kpis, .note { break-inside: avoid; }
+  .table-wrap, .figure, .kpis, .note, .summary, dl.gloss dt { break-inside: avoid; }
+  dl.gloss dt { break-after: avoid; }
   nav { display: none; }
   h2.newpage { break-before: page; border-top: none; }
 }
@@ -151,7 +222,7 @@ def build_html():
 <h1>YOLOv10s compilada para runtimes nativos</h1>
 <div class="sub">PBI-095, PBI-097 e PBI-098 · Relatório completo do experimento · 12 de novembro de 2026 · notebook com RTX 3050 6GB Laptop e i5-13450HX</div>
 
-<p>Este relatório reúne as quatro rodadas de um experimento sobre uma pergunta simples: <b>quanto se ganha ao compilar uma rede de detecção para um artefato nativo e executá-la a partir de C++</b>, em vez de rodar o PyTorch em Python, o que esse artefato ainda exige para funcionar e se o resultado numérico continua o mesmo. A rede é a YOLOv10s (Ultralytics). Foram testados AOTInductor e TensorRT na GPU NVIDIA, ONNX Runtime e OpenVINO (FP32 e INT8) na CPU, e ncnn via Vulkan na GPU NVIDIA, na GPU integrada Intel e na CPU. Por fim, um <b>engine de inferência próprio em C++</b>, gerado a partir do ONNX e sem nenhuma biblioteca de inferência, foi comparado ao OpenVINO na CPU, em FP32 e em INT8. Todos os backends foram validados contra a mesma referência, com tolerâncias fixas, e medidos com o mesmo protocolo.</p>
+<p>Este relatório reúne as quatro rodadas de um experimento, e o engine próprio construído em seguida, sobre uma pergunta simples: <b>quanto se ganha ao compilar uma rede de detecção para um artefato nativo e executá-la a partir de C++</b>, em vez de rodar o PyTorch em Python, o que esse artefato ainda exige para funcionar e se o resultado numérico continua o mesmo. A rede é a YOLOv10s (Ultralytics). Foram testados AOTInductor e TensorRT na GPU NVIDIA, ONNX Runtime e OpenVINO (FP32 e INT8) na CPU, e ncnn via Vulkan na GPU NVIDIA, na GPU integrada Intel e na CPU. Por fim, um <b>engine de inferência próprio em C++</b>, gerado a partir do ONNX e sem nenhuma biblioteca de inferência, foi comparado ao OpenVINO na CPU, em FP32 e em INT8. Todos os backends foram validados contra a mesma referência, com tolerâncias fixas, e medidos com o mesmo protocolo.</p>
 
 <div class="kpis">
   <div class="kpi"><b>2,94 ms</b><span>TensorRT FP16 na RTX 3050: 340 FPS, 1,90× o PyTorch eager</span></div>
@@ -160,8 +231,22 @@ def build_html():
   <div class="kpi"><b>20,94 ms</b><span>engine próprio em C++ na CPU, sem bibliotecas, em INT8: 48 FPS; FP32 a 1,07× e INT8 a 1,23× do OpenVINO</span></div>
 </div>
 
+<div class="summary">
+<h3>O experimento em uma página</h3>
+<p><b>A pergunta.</b> Uma rede neural, na hora de usar, é só um grafo de operações mais um arquivo de pesos. Em vez de rodá-la dentro do PyTorch, em Python, dá para transformar esse grafo num programa nativo. O experimento mede três coisas: se o resultado continua o mesmo, do que esse programa ainda depende e quanto ele ganha de velocidade.</p>
+<p><b>Como foi medido.</b> A mesma YOLOv10s passou por seis caminhos (figura da seção 4). Cada caminho é validado contra as mesmas 8 imagens de referência, com tolerâncias fixadas antes, e medido com o mesmo protocolo. Na CPU, o protocolo inclui resfriamento entre medições e a mediana de 3 rodadas. Tudo roda num único notebook, a <b>linha de base</b> descrita na seção 3.</p>
+<p><b>O que se aprendeu.</b></p>
+<ul>
+<li><b>Na GPU NVIDIA,</b> o TensorRT é o mais rápido (2,94 ms em FP16, 1,90× o PyTorch) e o que menos depende de bibliotecas, mas o artefato vale só para esta GPU.</li>
+<li><b>Na CPU,</b> a grande alavanca é o INT8 com a instrução AVX-VNNI: o OpenVINO INT8 faz 14,91 ms, 3,7× o PyTorch, perdendo 0,31 ponto de acurácia.</li>
+<li><b>O Vulkan (ncnn)</b> funciona em qualquer GPU, mas é bem mais lento que o CUDA nesta placa.</li>
+<li><b>O engine próprio</b> foi escrito do zero: um gerador transforma o grafo em C++ especializado, num executável que só depende da biblioteca C. Ele chegou a 93% da velocidade do OpenVINO em FP32 e a 81% em INT8, com acurácia INT8 melhor.</li>
+<li><b>Compilar não garante ganho.</b> O ncnn no Vulkan ficou mais lento que o PyTorch. O que mais pesa é o compilador saber usar o hardware: tensor cores, VNNI, fusões de camadas.</li>
+</ul>
+</div>
+
 <nav><ol>
-<li>Motivação</li><li>Hardware</li><li>Método comum</li><li>Ponto de partida: a webcam</li>
+<li>Motivação</li><li>Conceitos usados no relatório</li><li>Hardware: a linha de base</li><li>Método comum</li><li>Ponto de partida: a webcam</li>
 <li>Rodada 1: AOTInductor</li><li>Rodada 2: TensorRT</li><li>Rodada 3: CPU</li><li>Rodada 4: ncnn e Vulkan</li>
 <li>Engine próprio em C++</li><li>Comparação geral</li><li>Problemas e lições</li><li>Conclusão</li><li>Apêndice: versões e reprodução</li>
 </ol></nav>
@@ -180,15 +265,52 @@ def build_html():
 <p>O card sugeria começar pela CPU e pela YOLOv8m. As decisões tomadas ao longo do caminho foram: começar pela <b>GPU</b>, que é onde a webcam roda; usar a <b>YOLOv10s</b>, caso de interesse do card e que tem uma vantagem para comparar backends (o head end2end entrega as detecções finais <b>sem NMS</b>, então todo backend faz exatamente o mesmo trabalho); e depois cobrir a CPU e a GPU via Vulkan.</p>
 """)
 
-    # 2. Hardware
-    S.append("<h2>2. Hardware</h2>")
-    S.append("<p>Os resultados dependem muito do que o hardware sabe ou não sabe fazer, então vale descrever a máquina em detalhe.</p>")
+    # 2. Conceitos
+    S.append("""
+<h2>2. Conceitos usados no relatório</h2>
+<p>Esta seção explica, em poucas linhas, os termos que aparecem no resto do texto.</p>
+<dl class="gloss">
+<dt>Inferência, grafo e pesos</dt>
+<dd>Treinar ajusta os pesos; inferir é só aplicar a rede a uma entrada. Na inferência, a rede é um <b>grafo</b> fixo de operações (convoluções, ativações, concatenações) e um conjunto de <b>pesos</b>. Para a YOLOv10s são 86 convoluções, 21,7 bilhões de operações de ponto flutuante (GFLOPs) por imagem 640×640 e 28 MiB de pesos.</dd>
+<dt>Eager × compilado</dt>
+<dd>No modo <b>eager</b>, o PyTorch executa o grafo operação por operação, a partir do Python. Um <b>compilador</b> enxerga o grafo inteiro de antemão. Isso permite fundir operações (por exemplo, convolução + ativação num único kernel), escolher o melhor kernel para cada formato e eliminar o interpretador. O resultado é um <b>artefato</b> (pacote, engine ou executável) que roda sem Python.</dd>
+<dt>ONNX</dt>
+<dd>Formato aberto para descrever o grafo e os pesos. É a ponte entre o PyTorch e quase todos os outros caminhos testados: TensorRT, ONNX Runtime, OpenVINO e o engine próprio.</dd>
+<dt>Runner</dt>
+<dd>Programa C++ deste repositório que carrega um artefato e executa a rede. Todos têm os mesmos três comandos: <code>validate</code> (compara com a referência), <code>bench</code> (mede) e <code>detect</code> (processa uma foto).</dd>
+<dt>FP32, FP16, TF32 e INT8</dt>
+<dd>São formas de representar números. <b>FP32</b> é o ponto flutuante padrão, de 32 bits. <b>FP16</b> usa 16 bits: metade da memória e o dobro de vazão em hardware que suporta. <b>TF32</b> é um modo das GPUs NVIDIA que faz a conta das matrizes com precisão reduzida, mas mantém os dados em FP32; é mais rápido e muda levemente os resultados. <b>INT8</b> usa inteiros de 8 bits e exige <b>quantização</b>.</dd>
+<dt>Quantização e calibração</dt>
+<dd>Quantizar é mapear valores reais para inteiros de 8 bits com uma escala: <i>real ≈ escala × (inteiro − zero)</i>. Os pesos são conhecidos, então a escala vem deles, uma por canal de saída. As ativações dependem da imagem, então a escala vem da <b>calibração</b>: a rede roda sobre centenas de imagens reais e registra a faixa de valores de cada tensor. Aqui foram 300 imagens do COCO, separadas das 500 usadas para medir a acurácia.</dd>
+<dt>mAP50-95</dt>
+<dd>Métrica padrão de acurácia em detecção (COCO). É a precisão média sobre as classes e sobre limiares de sobreposição (IoU) de 0,50 a 0,95. Serve para medir quanto o INT8 perde em relação ao FP32.</dd>
+<dt>IoU</dt>
+<dd>Interseção sobre união: o quanto duas caixas se sobrepõem. Vai de 0 (nada em comum) a 1 (idênticas).</dd>
+<dt>Latência, FPS, p5 e p95</dt>
+<dd><b>Latência</b> é o tempo de uma inferência; <b>FPS</b> = 1000 / latência média em ms. Cada medição tem centenas de iterações. O <b>p95</b> é o tempo abaixo do qual ficam 95% delas (mostra os piores casos). O <b>p5</b> é o tempo das 5% mais rápidas; foi usado como estimativa do "ideal" quando a máquina não pôde ficar ociosa.</dd>
+<dt>% do pico</dt>
+<dd>Quanto da capacidade teórica do processador foi usada: GFLOPs da rede ÷ latência, dividido pelo máximo de operações por segundo do hardware. Mostra quanto espaço sobra para otimizar.</dd>
+<dt>SIMD, AVX2, FMA e AVX-VNNI</dt>
+<dd>Instruções que processam vários números de uma vez. Com <b>AVX2</b>, um registrador de 256 bits guarda 8 valores FP32. <b>FMA</b> faz multiplicação e soma numa instrução só: 8 multiplicações-somas por instrução. <b>AVX-VNNI</b> (<code>vpdpbusd</code>) faz 32 multiplicações-somas de 8 bits por instrução, 4× mais. É isso que torna o INT8 rápido nesta CPU.</dd>
+<dt>Tensor cores e cooperative matrix</dt>
+<dd>Unidades das GPUs NVIDIA especializadas em multiplicar matrizes pequenas em FP16 ou TF32. Pelo CUDA, o TensorRT e o PyTorch as usam diretamente. Pelo Vulkan, o acesso é pela extensão <b>cooperative matrix</b>.</dd>
+<dt>GEMM e im2col</dt>
+<dd>GEMM é a multiplicação de matrizes, a operação mais otimizada da computação. Uma convolução pode ser reescrita como GEMM (<b>im2col</b>): cada posição da imagem vira uma coluna com os pixels vizinhos, e os filtros viram as linhas. Quase todo runtime de CPU faz isso, inclusive o engine próprio.</dd>
+<dt>Controle térmico</dt>
+<dd>Notebooks reduzem a frequência quando esquentam, e isso prejudica quem roda por último numa sequência de medições. Por isso as medições de CPU têm 60 s de resfriamento antes de cada execução, 3 rodadas com a ordem trocada e usam a mediana.</dd>
+</dl>
+""")
+
+    # 3. Hardware
+    S.append("<h2>3. Hardware: a linha de base</h2>")
+    S.append("<p>Todos os números deste relatório vêm de uma única máquina, que é a <b>linha de base</b> do estudo. Em outro hardware, as latências absolutas mudam; o que tende a se manter é a comparação entre backends, desde que a máquina tenha os mesmos recursos (tensor cores, AVX-VNNI, Vulkan com cooperative matrix). Por isso a máquina é descrita em detalhe, junto com o que cada recurso explica nos resultados.</p>")
     S.append(table(["Componente", "Detalhes"], [
         ["<b>GPU</b>", "NVIDIA GeForce RTX 3050 6GB Laptop: chip GA107, arquitetura Ampere, capacidade 8.6, 20 SMs (2.560 núcleos CUDA e 80 tensor cores de 3ª geração), 6 GB GDDR6, até 2.100 MHz, limite de 95 W. Driver 620.70."],
         ["<b>CPU</b>", "Intel Core i5-13450HX (Raptor Lake, híbrida): <b>6 P-cores</b> com Hyper-Threading (CPUs lógicas 0–11, até 4,6 GHz) e <b>4 E-cores</b> (CPUs 12–15, até 3,4 GHz), 16 threads, 9,5 MiB de L2 e 20 MiB de L3. Instruções: AVX2, FMA, F16C e <b>AVX-VNNI</b>. Não tem AVX-512, AVX-512 FP16 nem AMX."],
         ["<b>GPU integrada</b>", "Intel UHD Graphics (Raptor Lake-S, PCI 8086:A78B), até 1.450 MHz, driver Mesa 26.2 (Vulkan 1.4). Suporta FP16; não tem cooperative matrix."],
         ["<b>Memória</b>", "16 GB (15 GiB visíveis)."],
         ["<b>Sistema</b>", "CachyOS (base Arch), Linux 7.3, GCC 16.2, CMake 4.4. CUDA 13.4 do sistema (usado pelo TensorRT) e CUDA 12.8 das wheels do PyTorch (usado pelo eager e pelo AOTInductor)."],
+        ["<b>Condições</b>", "Notebook na tomada, perfil de energia <i>performance</i>, governor <code>powersave</code> do <code>intel_pstate</code> (HWP), clocks não travados. Por P-core: 48 KiB de L1 de dados e 1,25 MiB de L2."],
     ]))
     S.append("""
 <h3>Por que isso importa</h3>
@@ -204,7 +326,23 @@ def build_html():
 
     # 3. Método comum
     S.append("""
-<h2>3. Método comum</h2>
+<h2>4. Método comum</h2>
+<h3>Os caminhos testados</h3>
+<p>Todos os caminhos partem do mesmo modelo treinado. Dois formatos intermediários alimentam os backends: o <code>torch.export</code>, do próprio PyTorch, e o ONNX, formato aberto. Cada caminho termina num programa que roda a rede, e todos passam pela mesma validação e pelo mesmo benchmark.</p>
+<div class="figure">""" + flow_svg() + """</div>
+<h3>Do que cada caminho depende</h3>
+<p>Uma das perguntas do experimento é o que o artefato ainda exige para rodar. A tabela separa o que é preciso para <b>gerar</b> o artefato do que o programa final precisa para <b>executar</b>. A coluna de execução vem do <code>ldd</code> de cada binário.</p>
+""")
+    S.append(table(["Caminho", "Para gerar o artefato", "Artefato", "Para executar", "Preso a"], [
+        ["PyTorch eager", "Python 3.12, PyTorch 2.11, Ultralytics", ".pt 15,9 MiB", "Python, PyTorch, CUDA 12.8", "nada"],
+        ["AOTInductor", "PyTorch (torch.export + Inductor), headers CUDA 12.8 das wheels, GCC", ".pt2 16–30 MiB, pesos dentro", "libtorch, libc10, cuDNN, cuBLAS e runtime CUDA 12.8; sem Python", "arquitetura da GPU e versão do PyTorch"],
+        ["TensorRT", "exportação ONNX, TensorRT 11.4 (trtexec), CUDA 13.4, cuDNN 9", ".plan 82–109 MiB", "só libnvinfer e libcudart 13", "modelo exato da GPU, versão do TensorRT"],
+        ["ONNX Runtime", "onnxruntime", ".onnx 28,4 MiB", "Python e onnxruntime", "nada"],
+        ["OpenVINO FP32 / INT8", "openvino; NNCF e imagens COCO para o INT8", "IR 28,0 / 7,7 MiB", "Python e runtime OpenVINO", "nada (INT8 rápido exige VNNI ou AVX-512)"],
+        ["ncnn", "pnnx (conversão), ncnn com Vulkan", ".param + .bin 27,8 MiB", "libncnn, glslang, SPIRV-Tools, loader Vulkan e driver", "nada (qualquer GPU Vulkan ou CPU)"],
+        ["<b>Engine próprio</b>", "Python (onnx, numpy) para o gerador; onnxruntime para a calibração INT8; GCC", "<b>um executável</b> de 66,5 MB com os pesos dentro", "<b>só libc, libstdc++, libm e libgcc</b>", "x86-64 com AVX2 e FMA; AVX-VNNI para o INT8"],
+    ]))
+    S.append("""
 <h3>O modelo e o grafo</h3>
 <p>Todos os backends partem do mesmo grafo: a YOLOv10s em modo eval, com as camadas fundidas (convolução + batch norm), entrada estática de <b>1×3×640×640</b>, batch 1, e saída <code>[1, 300, 6]</code> com <code>(x1, y1, x2, y2, score, classe)</code>. Um detalhe só apareceu na prática: nesta versão do Ultralytics, o checkpoint carrega com <code>end2end=False</code> e a saída vinha no formato antigo, <code>[1, 84, 8400]</code>, que exigiria NMS. O exportador liga o head one-to-one antes da fusão e confere o formato.</p>
 <h3>Como a equivalência é validada</h3>
@@ -227,14 +365,14 @@ def build_html():
 
     # 4. Webcam
     S.append("""
-<h2>4. Ponto de partida: a webcam</h2>
+<h2>5. Ponto de partida: a webcam</h2>
 <p>Antes de compilar qualquer coisa, a YOLOv10s rodou com o <code>predict</code> do Ultralytics na webcam do notebook, numa janela com FPS e memória de GPU. O loop ficou em <b>15 FPS</b>, mas a câmera sozinha também entregava 15 FPS: com pouca luz, o recurso <code>exposure_dynamic_framerate</code> dobra o tempo de exposição. Com ele desligado, o loop chegou a <b>30 FPS</b> (o máximo da câmera), com o modelo levando cerca de 13 ms por quadro e 232 MiB de memória de GPU. Como a câmera limita o loop muito antes do modelo, o experimento passou a medir <b>só a inferência</b>.</p>
 <p class="small">O <code>predict</code> levava cerca de 7 ms porque faz letterbox retangular: o quadro 1280×720 vira 640×384. Nas rodadas a entrada é sempre 640×640, cerca de 1,7× mais pixels, por isso o eager FP32 fica perto de 10 ms.</p>
 """)
 
     # 5. Rodada 1
     S.append("""
-<h2 class="newpage">5. Rodada 1: AOTInductor na GPU</h2>
+<h2 class="newpage">6. Rodada 1: AOTInductor na GPU</h2>
 <p>O AOTInductor é o compilador ahead-of-time do PyTorch 2. O fluxo é <code>torch.export</code> → <code>aoti_compile_and_package</code>, que gera um pacote <code>.pt2</code> com kernels Triton compilados, um wrapper C++ e os pesos embutidos. Um runner C++ (<code>yolo_aoti</code>) carrega o pacote com <code>AOTIModelPackageLoader</code> e executa sem Python, mas ainda com a libtorch.</p>
 <h3>Problemas resolvidos</h3>
 <ul>
@@ -248,7 +386,7 @@ def build_html():
 
     # 6. Rodada 2
     S.append("""
-<h2>6. Rodada 2: TensorRT na GPU</h2>
+<h2>7. Rodada 2: TensorRT na GPU</h2>
 <p>Caminho: <code>torch.onnx.export</code> (opset 18) → ONNX → <code>trtexec --stronglyTyped</code> → engine <code>.plan</code>. O runner <code>yolo_trt</code> desserializa o engine e chama <code>enqueueV3</code> num stream CUDA. Ele depende só de <code>libnvinfer</code> e do runtime CUDA 13.4, <b>sem libtorch e sem Python</b>. O TensorRT 11.4 veio do AUR. No TensorRT 11 o FP16 por flag do builder ficou obsoleto, então o FP16 vem do próprio ONNX exportado em half.</p>
 <h3>O caso do TF32</h3>
 <p>O engine FP32 padrão falhou numa única imagem (<code>webcam_04</code>, uma única detecção): a diferença de score foi 0,0022 no primeiro build e 0,0019 num rebuild, contra o limite de 0,001, com a mesma classe e caixas praticamente iguais (IoU 0,9998). O ONNX Runtime, rodando o mesmo ONNX, bate com o eager a menos de 2e-7, e o <code>trtexec</code> reproduz o erro sozinho, então a diferença não vem da exportação nem do runner. A causa é que o TensorRT <b>permite TF32 por padrão</b> em tensores FP32, e o engine contém kernels de convolução e GEMM em TF32, enquanto a referência é FP32 estrito. Um engine do mesmo ONNX com <code>--noTF32</code> passa nas 8 imagens com 3e-5 px de diferença, praticamente bit a bit, por cerca de 0,5 ms a mais. O FAIL do engine padrão foi mantido: é uma questão de tolerância de score, não um erro de detecção nesta amostra.</p>
@@ -257,8 +395,9 @@ def build_html():
 
     # 7. Rodada 3
     S.append("""
-<h2 class="newpage">7. Rodada 3: CPU</h2>
+<h2 class="newpage">8. Rodada 3: CPU</h2>
 <p>Objetivo: medir o desempenho de referência em CPU com runtimes prontos, comparado com o eager e com o teto teórico. Esse é o alvo para um futuro engine próprio em C++. FP16 ficou de fora porque não acelera esta CPU; o tipo reduzido testado foi <b>INT8 com AVX-VNNI</b>, quantizado com o NNCF (OpenVINO). O benchmark foi em Python, porque com dezenas de ms por inferência o custo da chamada é desprezível (menos de 0,1%).</p>
+<p><b>Como funcionam.</b> O <b>ONNX Runtime</b> lê o ONNX, aplica fusões de grafo e executa cada operação com kernels otimizados para a CPU (MLAS). O <b>OpenVINO</b>, da Intel, converte o ONNX para a sua representação (IR) e compila o grafo para a CPU com o oneDNN: escolhe o layout da memória (blocos de 8 canais), funde convolução, ativação e soma, e usa AVX2 ou AVX-VNNI conforme a precisão. O <b>NNCF</b> é a ferramenta de quantização do OpenVINO: insere nós de quantização no grafo e calibra as escalas com imagens reais.</p>
 <h3>INT8 e acurácia</h3>
 <p>A calibração usou 300 imagens do COCO val2017 (posições 501 a 800 por id), disjuntas das 500 de avaliação. O preset <code>performance</code> do NNCF falhou no critério de detecção; excluir o pós-processamento da quantização piorou o mAP; o preset <code>mixed</code> passou nos dois critérios. Modelo de 28,0 MiB (FP32) para 7,7 MiB (INT8).</p>
 """)
@@ -284,7 +423,7 @@ def build_html():
 
     # 8. Rodada 4
     S.append("""
-<h2>8. Rodada 4: ncnn e Vulkan</h2>
+<h2>9. Rodada 4: ncnn e Vulkan</h2>
 <p>O Vulkan é a API de GPU independente de fabricante: o mesmo binário roda em NVIDIA, AMD, Intel e celular, sem CUDA. O modelo foi convertido com o <code>pnnx</code> para o formato do ncnn (<code>.param</code> + <code>.bin</code>, 27,8 MiB). O ncnn não suporta o TopK e o Gather do head do YOLOv10, então o grafo termina no head bruto e a seleção dos 300 melhores roda em C++, <b>batendo bit a bit</b> com o Python. Esse pós-processamento custa de 0,9 a 2,5 ms e está somado aos resultados. O runner <code>yolo_ncnn</code> depende só do ncnn: sem Torch, sem Python e sem CUDA.</p>
 <p>A <b>cooperative matrix</b> foi confirmada em uso na RTX 3050: os shaders de convolução usam <code>OpCooperativeMatrixMulAddKHR</code>, e desligá-la leva o FP16 de 9,8 para 13,0 ms (medições únicas).</p>
 """)
@@ -301,8 +440,25 @@ def build_html():
 
     # 9. Engine próprio
     S.append("""
-<h2 class='newpage'>9. Engine próprio em C++ (PBI-097 e PBI-098)</h2>
+<h2 class='newpage'>10. Engine próprio em C++ (PBI-097 e PBI-098)</h2>
 <p>Depois de medir os runtimes prontos, a pergunta seguinte foi: <b>um engine escrito do zero, especializado neste grafo e sem nenhuma biblioteca de inferência, chega perto do OpenVINO?</b> A abordagem é a de um compilador, não de um interpretador: um script Python lê o ONNX (cortado antes da seleção top-300, como no ncnn) e gera um <code>model.cpp</code> com uma chamada por operação, formatos fixos e todos os buffers planejados numa única arena. Os pesos, já reorganizados no formato que os kernels leem, ficam embutidos no executável. O binário <code>yolo_engine</code> depende só de libc, libstdc++, libm e libgcc: sem BLAS, sem OpenMP, sem runtime.</p>
+<h3>Como funciona</h3>
+<div class="figure">""" + engine_svg() + """</div>
+<ul>
+<li><b>Gerador, não interpretador.</b> Um interpretador lê o grafo a cada execução e decide o que fazer. O gerador faz isso uma vez, antes de compilar:
+  <ul>
+  <li>calcula a forma de cada tensor e confere com a inferência de formas do ONNX;</li>
+  <li>funde convolução + SiLU + soma residual numa chamada só;</li>
+  <li>transforma 15 concatenações em escrita direta no destino, sem cópia;</li>
+  <li>planeja todos os buffers numa única área de memória (arena), reaproveitando o espaço de tensores que já não serão lidos (370 → 25 MB);</li>
+  <li>escreve um <code>model.cpp</code> com uma chamada por operação, com formatos fixos.</li>
+  </ul>
+  O compilador C++ então otimiza cada chamada para os seus tamanhos exatos.</li>
+<li><b>Convolução como GEMM.</b> Cada convolução vira uma multiplicação de matrizes. Os pesos já ficam reorganizados no binário; os pixels são copiados em painéis contíguos (im2col em blocos). Um micro-kernel AVX2 calcula um bloco de 6 canais × 16 posições inteiramente em registradores: 12 acumuladores, 2 leituras e 12 FMAs por passo.</li>
+<li><b>Threads.</b> Um pool próprio de 6 threads, uma em cada P-core, fixadas com afinidade. Cada convolução é dividida numa grade de blocos (posições × canais), escolhida pelo gerador para cada camada conforme o tamanho e o cache L2. Entre camadas, as threads esperam umas às outras girando (spin), sem dormir.</li>
+<li><b>INT8.</b> Os pesos viram inteiros de 8 bits com uma escala por canal; as ativações viram inteiros sem sinal com escala e zero calibrados. A conta usa a instrução <code>vpdpbusd</code>, e o resultado volta para FP32 já com a ativação aplicada.</li>
+<li><b>Referência como oráculo.</b> A versão com loops diretos (M1) continua no código (<code>--impl ref</code>). Ela é a base dos testes de cada kernel otimizado.</li>
+</ul>
 <p>O trabalho foi feito em cinco marcos, cada um validado com as mesmas referências e tolerâncias FP32 estritas:</p>
 """)
     S.append(table(["Marco", "O que entrou", "Threads", "Latência", "% do pico", "Validação"], [
@@ -338,7 +494,7 @@ def build_html():
 """)
 
     # 10. Comparação geral
-    S.append("<h2>10. Comparação geral</h2>")
+    S.append("<h2>11. Comparação geral</h2>")
     S.append(f'<div class="figure">{gpu_chart}</div>')
     S.append(table(["Dispositivo", "Backend", "Precisão", "Latência", "FPS", "Dependências em execução", "Artefato"], [
         ["RTX 3050", "PyTorch eager", "FP32 / FP16", "10,02 / 5,59 ms", "100 / 179", "Python, PyTorch, CUDA 12.8", ".pt 15,9 MiB"],
@@ -369,7 +525,7 @@ def build_html():
 
     # 10. Problemas e lições
     S.append("""
-<h2>11. Problemas e lições</h2>
+<h2>12. Problemas e lições</h2>
 <ul>
 <li><b>Configuração assimétrica distorce comparações.</b> O TF32 ligado de um lado e desligado do outro inflou o ganho do AOTInductor de 1,18× para 1,29×. Toda medição passou a imprimir a configuração usada.</li>
 <li><b>A temperatura do notebook é uma variável.</b> Medições em sequência penalizaram quem rodou por último em até 25%. Resfriamento, ordem trocada e mediana resolveram.</li>
@@ -383,7 +539,7 @@ def build_html():
 
     # 11. Conclusão
     S.append("""
-<h2>12. Conclusão</h2>
+<h2>13. Conclusão</h2>
 <h3>Respostas às perguntas</h3>
 <ul>
 <li><b>Viabilidade: sim.</b> A YOLOv10s exportou e compilou em todos os caminhos sem operações customizadas (no ncnn, com o TopK em C++). As saídas ficaram dentro das tolerâncias, com duas exceções de causa conhecida: o TF32 do TensorRT e o FP16 na GPU integrada.</li>
@@ -409,7 +565,7 @@ def build_html():
 """)
 
     # Apêndice
-    S.append("<h2>13. Apêndice: versões e reprodução</h2>")
+    S.append("<h2>14. Apêndice: versões e reprodução</h2>")
     S.append(table(["Componente", "Versão"], [
         ["PyTorch / Ultralytics", "2.11.0+cu128 / 8.4.210"],
         ["TensorRT / cuDNN (sistema)", "11.4.0.106 / 9.28.1"],
@@ -418,9 +574,22 @@ def build_html():
         ["ncnn / pnnx", "20261020 / 20261020"],
         ["Driver NVIDIA / Mesa", "620.70 / 26.2.6"],
         ["CUDA", "13.4 (sistema, TensorRT) e 12.8 (wheels, PyTorch e AOTInductor)"],
-        ["Compiladores", "GCC 16.2.1, CMake 4.4, Ninja 1.13, Python 3.12"],
+        ["Compiladores e ferramentas", "GCC 16.2.1, CMake 4.4, Ninja 1.13, Python 3.12, uv 0.11"],
     ]))
-    S.append("""<p>O passo a passo completo para reproduzir cada rodada (pacotes, comandos, saídas esperadas e solução de problemas) está no <code>README.md</code> e em <code>docs/REPRODUCE.md</code>, em inglês. Os relatórios técnicos de cada rodada estão em <code>docs/aoti-results.md</code>, <code>docs/tensorrt-results.md</code>, <code>docs/cpu-results.md</code> e <code>docs/ncnn-vulkan-results.md</code>. Este relatório é gerado por <code>docs/report/build_report.py</code>.</p>""")
+    S.append("""
+<h3>Como reproduzir</h3>
+<p>Todos os comandos rodam na raiz do repositório e os arquivos gerados vão para <code>artifacts/</code>. O passo a passo completo, com saídas esperadas e solução de problemas, está no <code>README.md</code> e em <code>docs/REPRODUCE.md</code> (em inglês).</p>
+<ol>
+<li><b>Pacotes do sistema:</b> driver NVIDIA, GCC, CMake, Ninja e <code>uv</code>. Para o TensorRT, também <code>cuda</code>, <code>cudnn</code> e <code>tensorrt</code>; para o Vulkan, <code>ncnn</code> e o loader Vulkan.</li>
+<li><b>Ambiente Python:</b> <code>uv sync</code> instala as dependências fixadas no <code>uv.lock</code>.</li>
+<li><b>Referências:</b> <code>uv run python aoti/export.py --capture-webcam</code> gera as 8 imagens, as saídas de referência do eager e os pacotes do AOTInductor. É feito uma vez só.</li>
+<li><b>Artefatos de cada backend:</b> exportação ONNX e engines TensorRT; IR do OpenVINO e INT8 com NNCF; conversão ncnn; ONNX bruto, calibração e geração do engine próprio.</li>
+<li><b>Compilação de todo o C++:</b> <code>cmake --preset release</code> e <code>cmake --build --preset release</code>. O CMake compila cada runner cujas dependências encontra, coloca os binários em <code>build/bin/</code> e informa o que pulou e por quê. <code>ctest --preset release</code> roda os testes do engine.</li>
+<li><b>Validação:</b> o comando <code>validate</code> de cada runner compara as 8 imagens com a referência; <code>engine/validate_int8.py</code> e <code>cpu/validate.py</code> fazem o mesmo para o INT8 e para a CPU. O mAP vem de <code>cpu/eval_map.py</code> e <code>engine/eval_map.py</code>.</li>
+<li><b>Benchmarks:</b> os scripts em <code>scripts/</code> (<code>bench_all</code>, <code>bench_cpu</code>, <code>bench_ncnn</code> e <code>bench_engine</code>) aplicam o protocolo térmico e gravam os resumos em <code>artifacts/</code>.</li>
+<li><b>Este relatório:</b> <code>docs/report/build_report.py</code> gera o HTML e o PDF a partir da mesma fonte.</li>
+</ol>
+<p>Os relatórios técnicos de cada rodada estão em <code>docs/aoti-results.md</code>, <code>docs/tensorrt-results.md</code>, <code>docs/cpu-results.md</code>, <code>docs/ncnn-vulkan-results.md</code>, <code>docs/engine-results.md</code> e <code>docs/engine-int8-results.md</code>.</p>""")
 
     return f"""<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8">
