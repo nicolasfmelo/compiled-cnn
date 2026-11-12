@@ -810,6 +810,20 @@ wheels = [
 ]
 
 [[package]]
+name = "pnnx"
+version = "20261020"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "torch" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8c/e7/98373b217be926b9a6895c9316c350f97fad8bedeb64e5f43cc99c0f498e/pnnx-20261020-py3-none-macosx_10_9_universal2.macosx_10_9_x86_64.macosx_11_0_arm64.whl", hash = "sha256:f4d60b7df5d1f7329f60cf75018ab4e25006db6d2299cf5ef8d56c051044660b", size = 54800431, upload-time = "2026-10-20T11:46:25.946Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/85/ba5d0b9b632822b63354fa03d6f84e1948528068897bb2cef64398c99ba9/pnnx-20261020-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:13727adb291bf8061a4cc95c8b911ff2459b406144ad3c86e755b6e3f8953427", size = 24748930, upload-time = "2026-10-20T11:46:29.512Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/b7/9665ea73f6503fea4f30abbd3eebcea1c8500095496167761a15482354bc/pnnx-20261020-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:d50d921e5897293d616444191c1a2dc5366423c81bdb4bd22a985fe8071cf17c", size = 29444872, upload-time = "2026-10-20T11:46:32.326Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/51/1b30523f85f9482f55f3f4f11ad8f4a37db7c8773d66625cceb2973c5c60/pnnx-20261020-py3-none-win_amd64.whl", hash = "sha256:cde5381cdebbef5d3e0e796e824ed02e2e1dfd075731921a3b3653514c518309", size = 18662314, upload-time = "2026-10-20T11:46:35.003Z" },
+]
+
+[[package]]
 name = "polars"
 version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1199,6 +1213,7 @@ dependencies = [
     { name = "onnxscript" },
     { name = "opencv-python" },
     { name = "openvino" },
+    { name = "pnnx" },
     { name = "pycocotools" },
     { name = "torch" },
     { name = "torchvision" },
@@ -1215,6 +1230,7 @@ requires-dist = [
     { name = "onnxscript", specifier = ">=0.7.2" },
     { name = "opencv-python" },
     { name = "openvino", specifier = ">=2026.4.1" },
+    { name = "pnnx", specifier = "==20261020" },
     { name = "pycocotools", specifier = ">=2.0.11" },
     { name = "torch", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchvision", index = "https://download.pytorch.org/whl/cu128" },
