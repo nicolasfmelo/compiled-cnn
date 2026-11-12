@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import resource
+from statistics import median
+import sys
 import threading
 import time
 
@@ -125,12 +127,46 @@ def check_host():
     print('host check: no compiler/build processes or >75% aggregate external CPU during 5 s', flush=True)
 
 
+def summarize(directory):
+    """Summarize three accepted runs per variant; never pool their iterations."""
+    summaries = []
+    for variant in VARIANTS:
+        runs = [json.loads((directory / f'round-{r}-{variant}.json').read_text()) for r in range(1, 4)]
+        if any(run['variant'] != variant for run in runs):
+            raise ValueError(f'wrong variant in results for {variant}')
+        keys = ('mean_ms', 'p50_ms', 'p95_ms', 'throughput', 'frequency_ghz',
+                'even_cpu_frequency_ghz', 'rss_mib', 'load_ms', 'first_ms', 'model_mib', 'model_gflops')
+        row = {key: median(run[key] for run in runs) for key in keys}
+        row.update(variant=variant, runs=3,
+                   min_mean_ms=min(run['mean_ms'] for run in runs),
+                   max_mean_ms=max(run['mean_ms'] for run in runs))
+        row['peak_fp32_gflops'] = 6 * 32 * row['frequency_ghz']
+        row['achieved_gflops'] = row['model_gflops'] * 1000 / row['mean_ms']
+        row['percent_peak'] = row['achieved_gflops'] / row['peak_fp32_gflops'] * 100
+        summaries.append(row)
+    text = ('summary: medians of 3 accepted runs; 60 s cooldown before each attempt\n'
+            'variant | median mean ms | median p95 ms | median FPS | median P-core GHz | min/max mean ms\n')
+    for row in summaries:
+        text += (f"{row['variant']} | {row['mean_ms']:.2f} | {row['p95_ms']:.2f} | "
+                 f"{row['throughput']:.1f} | {row['frequency_ghz']:.3f} | "
+                 f"{row['min_mean_ms']:.2f}/{row['max_mean_ms']:.2f}\n")
+    destination = directory.parent / 'round3-summary.txt'
+    destination.write_text(text)
+    destination.with_suffix('.json').write_text(json.dumps(summaries, indent=2) + '\n')
+    print(text, end='')
+    return summaries
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--variant', choices=VARIANTS)
     parser.add_argument('--profile', action='store_true')
     parser.add_argument('--check-host', action='store_true')
+    parser.add_argument('--output-json', type=Path, help='save an accepted run without overwriting other rounds')
+    parser.add_argument('--summarize', type=Path, metavar='RUN_DIRECTORY')
     args = parser.parse_args()
+    if args.summarize:
+        return summarize(args.summarize)
     if args.check_host:
         return check_host()
     if args.profile:
@@ -180,8 +216,18 @@ def main():
                   model_mib=size/2**20, frequency_ghz=frequency, even_cpu_frequency_ghz=primary_frequency,
                   frequency_samples=len(sampler.values),
                   model_gflops=gflops, achieved_gflops=achieved, peak_fp32_gflops=peak, percent_peak=achieved/peak*100)
-    (ARTIFACTS / f'cpu/bench-{args.variant}.json').write_text(json.dumps(result, indent=2) + '\n')
+    destination = args.output_json or ARTIFACTS / f'cpu/bench-{args.variant}.json'
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(result, indent=2) + '\n')
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except RuntimeError as error:
+        if not str(error).startswith('Discard this benchmark:'):
+            raise
+        # The monitor itself and its thresholds are unchanged. Distinguish a
+        # discarded run from model/configuration errors so only contention retries.
+        print(str(error), file=sys.stderr)
+        sys.exit(75)

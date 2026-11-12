@@ -6,12 +6,14 @@ Mesmo checkpoint e ONNX FP32 da rodada 2, modelo fundido end-to-end, batch 1,
 entrada `1×3×640×640`, saída `1×300×6`, sem NMS externo. As referências eager
 FP32 geradas na GPU foram **copiadas, nunca regeneradas**.
 
-**Resultado principal:** OpenVINO FP32 explícito mediu **43,43 ms / 23,0 it/s**;
-OpenVINO INT8, **19,35 ms / 51,7 it/s** (2,24× o OV FP32). As cinco variantes
-passaram nas oito entradas. O INT8 final usa NNCF `mixed`, sem `ignored_scope`,
-e perdeu **0,3094 ponto de mAP50–95**, abaixo do limite de 1,0 ponto. Não houve
-alteração de tolerâncias. Duas tentativas anteriores de quantização falharam
-no critério de detecção e estão registradas abaixo.
+**Resultado de acurácia:** as cinco variantes passaram nas oito entradas.
+O INT8 final usa NNCF `mixed`, sem `ignored_scope`, e perdeu **0,3094 ponto de
+mAP50–95**, abaixo do limite de 1,0 ponto. Não houve alteração de tolerâncias.
+Duas tentativas anteriores de quantização falharam no critério de detecção e
+estão registradas abaixo. **A tabela sequencial de desempenho foi retirada
+como baseline final por deriva térmica.** O protocolo corrigido está implementado,
+mas a execução real esgotou as cinco retentativas por concorrência externa,
+sem produzir medianas válidas; não há novo alvo de latência validado termicamente.
 
 ## Ambiente e dependências
 
@@ -49,9 +51,10 @@ transitiva antes desta rodada, é usado para detectar concorrência no benchmark
 - `cpu/quantize_int8.py`: conversão `ov.convert_model` do ONNX fixo, gravação
   dos dois IRs e calibração NNCF; opções para reproduzir as tentativas.
 - `cpu/eval_map.py`: três subprocessos e avaliação restrita aos mesmos 500 IDs.
-- `cpu/bench.py` e `native/bench_cpu.sh`: cinco processos sequenciais, saída
-  em stdout e `artifacts/bench/round3.txt`; metadados e medidas individuais
-  em `artifacts/cpu/`, fora do Git.
+- `cpu/bench.py` e `native/bench_cpu.sh`: três rodadas de cinco processos, com
+  cooldown e ordem rotativa; todos os blocos em stdout e `artifacts/bench/round3.txt`.
+  Os 15 JSONs aceitos ficam em `artifacts/bench/round3-runs/`, e as medianas em
+  `artifacts/bench/round3-summary.{txt,json}`, fora do Git.
 
 O modelo eager é carregado pelo helper existente e imediatamente convertido
 com `.cpu().float()`; não se alterou `aoti/`. O helper move transitoriamente o
@@ -176,10 +179,16 @@ com limites inclusivos **0,5 px / 0,001**. `overall_max` continua linha a linha
 e apenas informativo; TopK pode permutar linhas de baixa confiança. Em dois
 conjuntos vazios, máximos são zero e IoU é convencionalmente 1.
 
-INT8 usa o pareamento geométrico, mesma classe, IoU ≥ 0,80 e diferença de
-score ≤ 0,05. Detecções restantes dos dois lados são impressas; só passam se
-score < 0,30. Não se aplica o limite FP32 de 0,5 px ao INT8. Não houve nenhum
-unmatched na configuração final. Na tentativa performance, `webcam_00` teve
+INT8 usa o pareamento geométrico somente enquanto o maior IoU restante for
+≥ 0,80; cada par ainda exige mesma classe e diferença de score ≤ 0,05.
+Quando o melhor IoU fica abaixo de 0,80, o pareamento termina: todas as
+restantes dos dois lados são impressas como unmatched e só passam se score
+< 0,30. A revisão corrigiu um bug que forçava pares com qualquer sobreposição
+positiva, rejeitando incorretamente duas detecções de score 0,26 com IoU 0,05.
+O ramo FP32 não foi alterado: 250 comparações sintéticas determinísticas
+produziram resultados exatamente iguais aos da implementação anterior.
+Não se aplica o limite FP32 de 0,5 px ao INT8. Não houve nenhum unmatched
+na configuração final. Na tentativa performance, `webcam_00` teve
 um unmatched real de classe 59, score 0,261125: aceito pelo critério explícito,
 sem esconder a diferença de contagem.
 
@@ -216,9 +225,12 @@ FAIL webcam_05 ov-cpu-int8 boxes_max=0.702942 scores_max=0.053067 dets=1/1 min_i
 
 Com escopo ignorado, os mesmos três scores falharam; os IoUs caíram para
 0,867016 / 0,863304 / 0,845524, respectivamente. Nenhuma tolerância foi relaxada.
-`cpu/test_common.py` passou em cinco testes, incluindo permutação, erros de
-caixa/score/classe/contagem, conjuntos vazios, fronteira unmatched 0,30 e
-inversão de letterbox com filtro 0,001.
+`cpu/test_common.py` passou em oito testes, incluindo permutação, erros de
+caixa/score/classe/contagem, conjuntos vazios, fronteira unmatched 0,30,
+inversão de letterbox com filtro 0,001 e as três regressões da revisão:
+IoU ≈ 0,05 com scores 0,26 passa como dois unmatched; com scores 0,40 falha;
+IoU ≈ 0,85 com classes diferentes falha como par. A validação INT8 isolada
+e a completa foram repetidas: 8/8 e 40/40 PASS, respectivamente.
 
 ## COCO mAP: mesmas 500 imagens
 
@@ -242,87 +254,75 @@ de mAP50 no INT8 também não demonstra melhora geral. O primeiro desenvolviment
 do script encontrou um erro de serialização de IDs NumPy após avaliar eager;
 foi corrigido convertendo os IDs para `int`, e a avaliação completa foi repetida.
 
-## Benchmark final das cinco variantes
+## Benchmark controlado das cinco variantes
 
-Uma única sequência final, na ordem abaixo, processo independente por variante.
-Antes dela: `loadavg: 2.02 4.92 8.58`; os valores de 5/15 minutos ainda refletiam
-trabalho já encerrado. O check amostrou cinco segundos e não encontrou builds
-nem CPU externa agregada >75% de um núcleo lógico. Durante cada processo, um
-monitor de 500 ms continuou verificando compiladores e CPU externa. A sequência
-final não disparou o monitor. Desktop permaneceu ativo; não se promete uma
-máquina absolutamente isolada.
+### Controle térmico
 
-Houve uma primeira sequência com Rust/Clippy concorrente, descartada, e várias
-tentativas recusadas antes de encontrar uma janela livre. Uma segunda sequência
-completa foi substituída após o diagnóstico dos irmãos SMT da frequência.
-**A tabela abaixo não mistura variantes dessas sequências.** Não houve download,
-calibração ou mAP durante o benchmark final.
+A revisão identificou deriva térmica na sequência anterior: frequência média
+4,21 → 3,90 → 3,71 → 3,36 → 3,09 GHz, na ordem eager, ORT, OV FP32,
+OV INT8, OV default. A execução anterior não tinha outro trabalho pesado
+detectado, mas isso **não bastava para controlar a temperatura**. Os testes
+isolados do revisor, após 45 s de cooldown, confirmaram a penalização das
+variantes posteriores. Números fornecidos pelo revisor, não reexecutados aqui:
 
-| Variante | Média ms | p50 ms | p95 ms | it/s | RSS pico MiB | Carga ms | Primeiro ms | Modelo MiB |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| eager-cpu FP32 | 58,29 | 57,02 | 68,46 | 17,2 | 933,9 | 241,19 | 63,98 | 15,853 |
-| ort-cpu FP32 | 46,43 | 45,37 | 53,44 | 21,5 | 217,2 | 76,27 | 43,75 | 28,358 |
-| ov-cpu FP32 | **43,43** | 42,61 | 48,88 | 23,0 | 214,4 | 126,65 | 47,94 | 28,021 |
-| ov-cpu INT8 | **19,35** | 18,98 | 21,60 | 51,7 | 169,6 | 269,21 | 17,48 | 7,722 |
-| ov-cpu FP32 default | 55,19 | 54,10 | 61,16 | 18,1 | 213,5 | 133,85 | 40,31 | 28,021 |
+| Variante | Sequencial anterior: média ms / GHz | Revisor, isolado com 45 s: média ms / GHz |
+|---|---:|---:|
+| ort-cpu FP32 | 46,43 / 3,90 | 43,57 / 4,14 |
+| ov-cpu FP32 | 43,43 / 3,71 | 41,16 / 4,01 |
+| ov-cpu INT8 | 19,35 / 3,36 | 15,17 / 4,19 |
 
-| Variante | GHz, média dos 6 P-cores (máximo por par SMT) | GHz, somente CPUs pares | Pico FP32 GFLOPS | GFLOPS equivalentes atingidos | % do pico FP32 |
-|---|---:|---:|---:|---:|---:|
-| eager-cpu FP32 | 4,210 | 4,175 | 808,36 | 372,32 | 46,06% |
-| ort-cpu FP32 | 3,897 | 3,878 | 748,28 | 467,43 | 62,47% |
-| ov-cpu FP32 | 3,712 | 3,703 | 712,67 | 499,77 | 70,13% |
-| ov-cpu INT8 | 3,361 | 3,358 | 645,38 | 1121,54 | **173,78% equivalente, não utilização FP32** |
-| ov-cpu FP32 default | 3,086 | 1,297 | 592,49 | 393,20 | 66,36% |
+O script agora espera **60 s antes de cada tentativa**, faz três rodadas e
+rotaciona a ordem por deslocamentos 0, 2 e 4:
 
-Saída literal dos cinco blocos de `bash native/bench_cpu.sh`:
+1. eager FP32 → ORT FP32 → OV FP32 → OV INT8 → OV FP32 default;
+2. OV FP32 → OV INT8 → OV FP32 default → eager FP32 → ORT FP32;
+3. OV FP32 default → eager FP32 → ORT FP32 → OV FP32 → OV INT8.
+
+Cada variante continua em processo independente, com 20 aquecimentos + 200
+medidas e as mesmas propriedades/afinidades. Após o cooldown, o check de cinco
+segundos verifica o host; o monitor de 500 ms acompanha a execução. O monitor
+**não foi alterado**, incluindo o limiar agregado de 75% de uma CPU lógica e
+a lista de compiladores. Descartes recebem código 75: o script espera novos
+60 s e retenta até cinco vezes além da tentativa inicial; ao esgotar, falha
+explicitamente. Erros de modelo/configuração não são retentados. Arquivos de
+resultados e resumo antigos são removidos no início, impedindo resumo obsoleto.
+
+**Por decisão do usuário, containers Docker de outros projetos permaneceram
+rodando.** Não foram parados, modificados nem inspecionados além das métricas
+de processos usadas pelo monitor. Desktop e navegador também permaneceram
+ativos. Não houve download, calibração ou avaliação COCO durante a tentativa.
+
+### Resultado da execução controlada nesta revisão
+
+A primeira variante da rodada 1, eager FP32, foi descartada em todas as seis
+tentativas (inicial + cinco retentativas). O log identificou atividade externa
+de `bun`, navegador/desktop e `kswapd0`, com picos de CPU agregada superiores
+ao limiar. **O script falhou como solicitado; nenhuma execução foi aceita.**
+O log completo está em `artifacts/bench/round3.txt` e a cópia da sessão em
+`artifacts/bench/round3-thermal-session.log`. Última linha:
 
 ```text
-variant: eager-cpu-fp32
-settings: threads=6 interop_threads=1 inference_mode=on affinity=0,2,4,6,8,10 warmup=20 iterations=200
-latency ms: mean 58.29 | p50 57.02 | p95 68.46
-throughput: 17.2 it/s
-peak RSS MiB: 933.9
-load ms: 241.19 | first run ms: 63.98
-model MiB: 15.853
-frequency: P-core mean 4.210 GHz (max per SMT pair) | even CPUs mean 4.175 GHz | samples 116
-compute: model 21.703 GFLOPs | achieved 372.32 GFLOPS | peak FP32 808.36 GFLOPS | 46.06% of peak
-variant: ort-cpu-fp32
-settings: provider=CPUExecutionProvider intra_threads=6 inter_threads=1 ORT_SEQUENTIAL ORT_ENABLE_ALL affinity=0,2,4,6,8,10 warmup=20 iterations=200
-latency ms: mean 46.43 | p50 45.37 | p95 53.44
-throughput: 21.5 it/s
-peak RSS MiB: 217.2
-load ms: 76.27 | first run ms: 43.75
-model MiB: 28.358
-frequency: P-core mean 3.897 GHz (max per SMT pair) | even CPUs mean 3.878 GHz | samples 92
-compute: model 21.703 GFLOPs | achieved 467.43 GFLOPS | peak FP32 748.28 GFLOPS | 62.47% of peak
-variant: ov-cpu-fp32
-settings: INFERENCE_PRECISION_HINT=<Type: 'float32'> PERFORMANCE_HINT=LATENCY INFERENCE_NUM_THREADS=6 ENABLE_HYPER_THREADING=False ENABLE_CPU_PINNING=True NUM_STREAMS=1 affinity=0,2,4,6,8,10 warmup=20 iterations=200
-latency ms: mean 43.43 | p50 42.61 | p95 48.88
-throughput: 23.0 it/s
-peak RSS MiB: 214.4
-load ms: 126.65 | first run ms: 47.94
-model MiB: 28.021
-frequency: P-core mean 3.712 GHz (max per SMT pair) | even CPUs mean 3.703 GHz | samples 87
-compute: model 21.703 GFLOPs | achieved 499.77 GFLOPS | peak FP32 712.67 GFLOPS | 70.13% of peak
-variant: ov-cpu-int8
-settings: INFERENCE_PRECISION_HINT=<Type: 'float32'> PERFORMANCE_HINT=LATENCY INFERENCE_NUM_THREADS=6 ENABLE_HYPER_THREADING=False ENABLE_CPU_PINNING=True NUM_STREAMS=1 affinity=0,2,4,6,8,10 warmup=20 iterations=200
-latency ms: mean 19.35 | p50 18.98 | p95 21.60
-throughput: 51.7 it/s
-peak RSS MiB: 169.6
-load ms: 269.21 | first run ms: 17.48
-model MiB: 7.722
-frequency: P-core mean 3.361 GHz (max per SMT pair) | even CPUs mean 3.358 GHz | samples 39
-compute: model 21.703 GFLOPs | achieved 1121.54 GFLOPS | peak FP32 645.38 GFLOPS | 173.78% of peak
-variant: ov-cpu-fp32-default
-settings: INFERENCE_PRECISION_HINT=<Type: 'float32'> PERFORMANCE_HINT=LATENCY INFERENCE_NUM_THREADS=6 ENABLE_HYPER_THREADING=False ENABLE_CPU_PINNING=True NUM_STREAMS=1 affinity=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 warmup=20 iterations=200
-latency ms: mean 55.19 | p50 54.10 | p95 61.16
-throughput: 18.1 it/s
-peak RSS MiB: 213.5
-load ms: 133.85 | first run ms: 40.31
-model MiB: 28.021
-frequency: P-core mean 3.086 GHz (max per SMT pair) | even CPUs mean 1.297 GHz | samples 110
-compute: model 21.703 GFLOPs | achieved 393.20 GFLOPS | peak FP32 592.49 GFLOPS | 66.36% of peak
+ERROR: round 1 eager-cpu-fp32 discarded after initial attempt and five retries
 ```
+
+Sem três execuções aceitas por variante, **não existe tabela de medianas válida**.
+`round3-summary.txt` e `.json` não foram gerados; não foram preenchidos com
+valores anteriores ou com as medições isoladas do revisor. Estado da tabela:
+
+| Variante | Mediana das médias ms | Mediana p95 ms | Mediana FPS | Mediana P-core GHz | Min/max das médias ms |
+|---|---:|---:|---:|---:|---:|
+| eager-cpu FP32 | — | — | — | — | — |
+| ort-cpu FP32 | — | — | — | — | — |
+| ov-cpu FP32 | — | — | — | — | — |
+| ov-cpu INT8 | — | — | — | — | — |
+| ov-cpu FP32 default | — | — | — | — | — |
+
+Quando as 15 execuções forem aceitas, o script grava todos os blocos em
+`round3.txt`, os JSONs por rodada em `round3-runs/`, e imprime/grava a tabela
+em `round3-summary.txt`. Cada mediana usa **três valores, um por execução**,
+sem juntar as 600 iterações; min/max referem-se às três
+latências médias. O resumo JSON também contém medianas de p50, RSS, carga,
+primeiro forward e tamanho, além de GFLOPS/pico calculados a partir das medianas.
 
 ## Comparação com as rodadas GPU e conclusão
 
@@ -336,31 +336,36 @@ Números **citados, não reexecutados**, de
 | TensorRT C++ padrão | 7,44 (**1 FAIL estrito**) | 2,95 |
 | TensorRT C++ sem TF32 | 7,87 (8/8 PASS) | — |
 
-A GPU mantém vantagem clara: OV CPU FP32 é 4,40× mais lento que eager GPU
-FP32 e 5,52× mais lento que TRT FP32 sem TF32. Mesmo INT8 CPU é 6,56× mais
-lento que TRT GPU FP16. São políticas de precisão e protocolos diferentes
-(GPU: 50+500, CPU: 20+200), não um teste controlado de hardware igual.
+As comparações numéricas de speedup CPU/GPU e entre variantes CPU ficam
+**pendentes das três rodadas controladas**: os valores sequenciais estavam
+confundidos pela frequência decrescente. Os testes isolados do revisor reforçam
+a necessidade de controle térmico, mas não substituem as três medições de
+cada variante. GPU usa 50+500 iterações; CPU, 20+200 por execução, com políticas
+de precisão diferentes. Não é um teste de hardware em condições idênticas.
 
-Para um futuro engine C++ próprio, os alvos medidos são **43,43 ms em FP32** e
-**19,35 ms em INT8**, preservando os critérios de detecção e mAP. OV FP32 é
-1,34× mais rápido que eager CPU; INT8 reduz mais 55,4% da latência sobre OV
-FP32. O default sem taskset foi 27,1% mais lento que o explícito, embora as
-propriedades efetivas fossem iguais; a frequência e a escolha de irmãos SMT
-não foram iguais. Não se atribui toda a diferença exclusivamente aos E-cores,
-que o default não precisou usar para seis threads com HT desligado.
+Para um futuro engine C++ próprio, os critérios de detecção e mAP continuam
+estabelecidos, mas o alvo definitivo de latência FP32/INT8 deve vir da tabela
+de medianas ainda não obtida. **Retira-se a conclusão de que OV default é
+27,1% mais lento que OV explícito**: essa razão vinha da sequência termicamente
+confundida, não de frequências comparáveis. Também ficam retirados os speedups,
+a utilização FP32 de 70,13% e o teto temporal de 30,45 ms daquela tabela como
+conclusões finais. Não se atribui uma diferença não controlada aos E-cores,
+aos irmãos SMT ou à afinidade isoladamente.
 
-A execução FP32 mais rápida atingiu **499,77 de 712,67 GFLOPS estimados (70,13%)**.
-Um limite puramente aritmético àquela frequência seria aproximadamente
-**30,45 ms**, deixando um fator máximo matemático de 1,43× / 29,9% de redução
-até 100%; não é promessa atingível. Memória, ativações, atenção, TopK, conversões
-e overhead de escalonamento não consistem só em FMAs densas. O INT8 já excede
-o teto FP32 em operações equivalentes: **não se deduz sua distância ao teto
-INT8** a partir desse percentual.
+Quando houver resultados, o resumo calcula GFLOPS a partir da mediana das
+latências médias e pico FP32 a partir da mediana de GHz; o percentual é a
+razão desses dois valores, não a mediana de percentuais individuais. O script
+já calcula esses campos em `round3-summary.json`. Não se publicam percentuais
+ou speedups substitutos sem medições aceitas. Memória, ativações, atenção,
+TopK, conversões e escalonamento não são apenas FMAs densas. Para INT8,
+**não se deduz a distância ao teto INT8** da razão contra o teto FP32.
 
 Limitações: notebook híbrido com boost e térmica variáveis, sem fixar clocks,
-potência, governador ou confirmar alimentação pela tomada; ordem não
-randomizada, uma sequência final e nenhum intervalo de confiança. As médias
-de frequência mudam entre variantes e não são frequência nominal constante.
+potência, governador ou confirmar alimentação pela tomada. O novo protocolo
+usa ordem rotativa determinística, não aleatória, três repetições e faixa
+mínima/máxima, não intervalos de confiança. Cooldown de 60 s reduz a deriva,
+mas não garante temperatura inicial idêntica. As frequências continuam medidas,
+não são uma constante nominal.
 O amostrador de frequência e o monitor de concorrência são threads de baixo
 custo, presentes em todos os processos. `scaling_cur_freq` é uma estimativa,
 e o máximo por par SMT evita o caso ocioso observado, mas não substitui
@@ -402,6 +407,7 @@ uv run python cpu/eval_map.py
 bash native/bench_cpu.sh
 
 uv run python cpu/test_common.py
+uv run python cpu/test_bench.py
 uv run python -m py_compile cpu/*.py
 bash -n native/bench_cpu.sh
 git diff --check
@@ -421,10 +427,16 @@ uv run python cpu/validate.py
 uv run python cpu/eval_map.py
 ```
 
-Verificação final executada: `uv sync` OK; quantização final OK; validação
-**40 PASS / 0 FAIL**, oito linhas de resultado por variante; mAP completo
-OK com queda de 0,3094 ponto; benchmark OK com cinco blocos na mesma sessão;
-cinco testes sintéticos OK; compilação sintática Python, sintaxe Bash e
-`git diff --check` OK. As recusas de benchmark por concorrência foram mantidas
-como recusas, nunca convertidas em PASS; o primeiro erro de serialização no
-avaliador foi corrigido e a verificação repetida.
+Verificação original de acurácia: `uv sync`, quantização e mAP completo OK,
+com queda de 0,3094 ponto; referências e IRs preservados nesta revisão.
+Verificação repetida na revisão: validação INT8 isolada **8 PASS / 0 FAIL**;
+validação completa **40 PASS / 0 FAIL**; oito testes de validação e quatro do
+protocolo/resumo OK; compilação sintática Python, sintaxe Bash e
+`git diff --check` OK. Os testes do benchmark verificam medianas por execução,
+faixa min/max, ordem 0/2/4, cooldown de cada tentativa, retentativa somente
+para concorrência, limite de cinco retentativas e erro comum sem retentativa.
+**Execução real do benchmark controlado: FAIL por concorrência**, após tentativa
+inicial + cinco retentativas da primeira variante. Nenhum JSON de execução
+aceita ou resumo foi gerado; não se reutilizou a tabela antiga como se fosse
+controlada. É necessário repetir `bash native/bench_cpu.sh` numa janela que
+passe pelo monitor inalterado para concluir a tabela, percentuais e speedups.
