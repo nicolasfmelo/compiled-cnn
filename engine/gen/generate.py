@@ -93,6 +93,8 @@ def compile_graph(source, destination, stage):
             group = a.get('group', 1)
             pads = a.get('pads', [0]*4)
             stride = a.get('strides', [1, 1])
+            if pads[0] != pads[2] or pads[1] != pads[3]:
+                raise ValueError(f'{node.name}: asymmetric Conv padding unsupported: {pads}')
             if (n != 1 or c != ic*group or oc % group or a.get('dilations', [1, 1]) != [1, 1]
                     or a.get('auto_pad', b'NOTSET') != b'NOTSET' or a.get('kernel_shape', [kh, kw]) != [kh, kw]):
                 raise ValueError(f'{node.name}: unsupported Conv {a} {shapes}')
@@ -177,6 +179,12 @@ def compile_graph(source, destination, stage):
             params = dict(axis=a.get('axis', -1) % len(shapes[0]))
         else:
             raise ValueError(f'unhandled {kind}')
+        if alias:
+            for base, _ in alias:
+                while values[base].alias is not None:
+                    base = values[base].alias
+                if base == model.graph.input[0].name:
+                    raise ValueError(f'{node.name}: input-rooted aliases unsupported')
         for i, (name, shape) in enumerate(zip(node.output, out_shapes)):
             if any(x <= 0 for x in shape):
                 raise ValueError(f'{node.name}: invalid shape {shape}')
@@ -202,16 +210,27 @@ def compile_graph(source, destination, stage):
         expected = tuple(d.dim_value for d in x.type.tensor_type.shape.dim)
         if expected != actual:
             raise ValueError(f'shape disagreement {x.name}: ours={actual}, ONNX={expected}')
+    def fused_root(name):
+        while values[name].alias is not None:
+            name = values[name].alias
+        return name
+
+    def consumers():
+        uses = {k: [] for k in values}
+        for op in ops:
+            for x in op['inputs']: uses[fused_root(x)].append(op)
+        # A graph output is observable even if no generated op consumes it.
+        uses[fused_root(model.graph.output[0].name)].append({'kind': 'GraphOutput'})
+        return uses
+
     # Recognize Conv -> Sigmoid -> Mul once; retain a separate SiLU in M1/M2.
-    uses = {k: [] for k in values}
-    for op in ops:
-        for x in op['inputs']: uses[x].append(op)
+    uses = consumers()
     removed = set()
     for op in ops:
         if op['kind'] != 'Sigmoid': continue
         x, sig = op['inputs'][0], op['outputs'][0]
-        if len(uses[sig]) != 1: continue
-        mul = uses[sig][0]
+        if len(uses[fused_root(sig)]) != 1: continue
+        mul = uses[fused_root(sig)][0]
         if mul['kind'] != 'Mul' or set(mul['inputs']) != {x, sig}: continue
         op.update(kind='Silu', inputs=[x], outputs=mul['outputs'])
         removed.add(id(mul))
@@ -219,28 +238,22 @@ def compile_graph(source, destination, stage):
     # Generated references keep their original aliases, so rewrite by creating a
     # view from the fused producer output to the final activation/add output.
     if stage >= 3:
-        uses = {k: [] for k in values}
-        for op in ops:
-            for x in op['inputs']: uses[x].append(op)
+        uses = consumers()
         removed = set()
         for op in ops:
             if op['kind'] != 'Conv': continue
             out = op['outputs'][0]
-            if len(uses[out]) == 1 and uses[out][0]['kind'] == 'Silu':
+            if (len(uses[out]) == 1 and uses[out][0]['kind'] == 'Silu'
+                    and uses[out][0]['inputs'] == [out]):
                 act = uses[out][0]
                 values[act['outputs'][0]].alias = out
                 op['silu'] = 1
                 removed.add(id(act))
         ops = [op for op in ops if id(op) not in removed]
-        def fused_root(name):
-            while values[name].alias is not None:
-                name = values[name].alias
-            return name
-        uses = {k: [] for k in values}
-        for op in ops:
-            for x in op['inputs']: uses[fused_root(x)].append(op)
+        uses = consumers()
+        producer = {fused_root(x): i for i, op in enumerate(ops) for x in op['outputs']}
         removed = set()
-        for op in ops:
+        for i, op in enumerate(ops):
             if op['kind'] != 'Conv': continue
             out = op['outputs'][0]
             if len(uses[out]) != 1 or uses[out][0]['kind'] != 'Add': continue
@@ -248,6 +261,9 @@ def compile_graph(source, destination, stage):
             if values[add['outputs'][0]].shape != values[out].shape: continue
             residual = next((x for x in add['inputs'] if fused_root(x) != out), None)
             if residual is None or values[residual].shape != values[out].shape: continue
+            # A residual must already exist at the Conv, not merely at the Add.
+            # Constants and graph inputs have no producing op and are ready.
+            if producer.get(fused_root(residual), -1) >= i: continue
             op['residual'] = residual
             # Include the extra read in liveness and descriptor generation.
             op['inputs'].append(residual)

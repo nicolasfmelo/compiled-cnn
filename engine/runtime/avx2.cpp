@@ -100,7 +100,7 @@ void conv_opt(Context& ctx, const Tensor& x, const Tensor& w, const Tensor& b, T
     int oc = y.shape[1], oh = y.shape[2], ow = y.shape[3], n = oh*ow, k = ic*p.kh*p.kw;
     constexpr int nb = 64, kb = 128;
     if (ctx.scratch[0].size() < static_cast<size_t>(k*nb)) throw std::runtime_error("im2col scratch too small");
-    bool direct = p.kh == 1 && p.kw == 1 && p.sy == 1 && p.sx == 1 && p.py == 0 && p.px == 0;
+    bool direct = p.kh == 1 && p.kw == 1 && p.sy == 1 && p.sx == 1 && p.py == 0 && p.px == 0 && ih == oh && iw == ow;
     ctx.pool.parallel((n+nb-1)/nb, [&](size_t job, int worker) {
         int pos = static_cast<int>(job)*nb;
         float* scratch = ctx.scratch[worker].data();
