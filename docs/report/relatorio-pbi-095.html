@@ -1,0 +1,810 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YOLOv10s compilada para runtimes nativos</title>
+<style>
+:root { --ink:#1f1f1e; --ink2:#4a4a48; --muted:#6f6f6c; --line:#e4e4e1; --zebra:#f6f6f4;
+        --panel:#f1f5fb; --accent:#2a78d6; --bg:#ffffff; --warn:#b5520f; }
+@media screen and (prefers-color-scheme: dark) {
+  :root { --ink:#ededea; --ink2:#c9c9c5; --muted:#a3a39f; --line:#3a3a38; --zebra:#232322;
+          --panel:#1d2633; --accent:#5b9cf0; --bg:#161615; --warn:#f0a26a; }
+  svg text { fill: var(--ink2) !important; }
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body { margin: 0 auto; max-width: 900px; padding: 32px 16px 64px; color: var(--ink);
+       background: var(--bg); font: 15px/1.6 "DejaVu Sans", system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1 { font-size: 30px; line-height: 1.2; margin: 0 0 6px; }
+h2 { font-size: 21px; margin: 40px 0 10px; padding-top: 6px; border-top: 1px solid var(--line); }
+h3 { font-size: 16px; margin: 22px 0 6px; }
+p, li { color: var(--ink); }
+.sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+.small { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+code { font-family: "DejaVu Sans Mono", ui-monospace, monospace; font-size: 0.88em;
+       background: var(--zebra); padding: 1px 4px; border-radius: 4px; }
+.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 18px 0 8px; }
+.kpi { background: var(--panel); border-radius: 10px; padding: 12px 14px; }
+.kpi b { display: block; font-size: 22px; line-height: 1.2; }
+.kpi span { color: var(--muted); font-size: 12.5px; line-height: 1.35; display: block; margin-top: 4px; }
+.table-wrap { overflow-x: auto; margin: 8px 0 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; font-weight: 700; border-bottom: 1.5px solid var(--ink2); padding: 6px 7px; vertical-align: bottom; }
+td { border-bottom: 1px solid var(--line); padding: 5px 7px; vertical-align: top; }
+tbody tr:nth-child(even) td { background: var(--zebra); }
+td.num, th.num { text-align: right; white-space: nowrap; }
+tr.best td { font-weight: 700; }
+.figure { margin: 10px 0 4px; }
+.figure svg { width: 100%; height: auto; }
+.note { border-left: 3px solid var(--accent); background: var(--panel); padding: 10px 14px;
+        border-radius: 0 8px 8px 0; margin: 12px 0; }
+.warn { color: var(--warn); font-weight: 700; }
+nav ol { columns: 2; font-size: 14px; padding-left: 20px; }
+@media (max-width: 640px) { .kpis { grid-template-columns: repeat(2, 1fr); } nav ol { columns: 1; } h1 { font-size: 24px; } }
+@page { size: A4; margin: 17mm 16mm 18mm;
+        @bottom-left { content: "PBI-095 · YOLOv10s compilada para runtimes nativos"; font: 8pt "DejaVu Sans"; color: #6f6f6c; }
+        @bottom-right { content: "Página " counter(page) " de " counter(pages); font: 8pt "DejaVu Sans"; color: #6f6f6c; } }
+@media print {
+  body { max-width: none; padding: 0; font-size: 9.6pt; line-height: 1.5; }
+  h1 { font-size: 21pt; } h2 { font-size: 14pt; margin-top: 22px; break-after: avoid; }
+  h3 { font-size: 11pt; break-after: avoid; }
+  table { font-size: 8pt; } .kpi b { font-size: 15pt; } .kpi span { font-size: 8pt; }
+  .table-wrap, .figure, .kpis, .note { break-inside: avoid; }
+  nav { display: none; }
+  h2.newpage { break-before: page; border-top: none; }
+}
+</style></head>
+<body>
+<h1>YOLOv10s compilada para runtimes nativos</h1>
+<div class="sub">PBI-095 · Relatório completo do experimento · 12 de novembro de 2026 · notebook com RTX 3050 6GB Laptop e i5-13450HX</div>
+
+<p>Este relatório reúne as quatro rodadas de um experimento sobre uma pergunta simples: <b>quanto se ganha ao compilar uma rede de detecção para um artefato nativo e executá-la a partir de C++</b>, em vez de rodar o PyTorch em Python, o que esse artefato ainda exige para funcionar e se o resultado numérico continua o mesmo. A rede é a YOLOv10s (Ultralytics). Foram testados AOTInductor e TensorRT na GPU NVIDIA, ONNX Runtime e OpenVINO (FP32 e INT8) na CPU, e ncnn via Vulkan na GPU NVIDIA, na GPU integrada Intel e na CPU. Todos os backends foram validados contra a mesma referência, com tolerâncias fixas, e medidos com o mesmo protocolo.</p>
+
+<div class="kpis">
+  <div class="kpi"><b>2,94 ms</b><span>TensorRT FP16 na RTX 3050: 340 FPS, 1,90× o PyTorch eager</span></div>
+  <div class="kpi"><b>14,91 ms</b><span>OpenVINO INT8 na CPU: 67 FPS, 3,73× o eager, com −0,31 ponto de mAP</span></div>
+  <div class="kpi"><b>117 de 120</b><span>validações PASS; as 3 exceções têm causa conhecida (TF32 e FP16 na GPU integrada)</span></div>
+  <div class="kpi"><b>sem Python</b><span>três runners C++ (AOTInductor, TensorRT e ncnn) executam a rede sem interpretador</span></div>
+</div>
+
+<nav><ol>
+<li>Motivação</li><li>Hardware</li><li>Método comum</li><li>Ponto de partida: a webcam</li>
+<li>Rodada 1: AOTInductor</li><li>Rodada 2: TensorRT</li><li>Rodada 3: CPU</li><li>Rodada 4: ncnn e Vulkan</li>
+<li>Comparação geral</li><li>Problemas e lições</li><li>Conclusão</li><li>Apêndice: versões e reprodução</li>
+</ol></nav>
+
+<h2>1. Motivação</h2>
+<p>A ideia de partida, registrada no card PBI-095, é tratar uma rede neural pelo que ela é na hora da inferência: <b>um grafo de operações mais um conjunto de pesos</b>. Em vez de depender de Python e do PyTorch para rodar, esse grafo pode ser compilado para uma biblioteca ou um executável nativo. O interesse é prático: entender a viabilidade, as dependências que sobram e os ganhos reais antes de integrar uma solução à linguagem Enty (PBI-096). O card deixa claro um cuidado: compilar ou embutir os pesos <i>não garante</i> mais velocidade, então o ganho precisa ser medido, inclusive quando não houver.</p>
+<p>O experimento responde a três perguntas:</p>
+<ul>
+<li><b>Viabilidade:</b> o modelo exporta e compila sem operações customizadas, e o resultado numérico continua o mesmo?</li>
+<li><b>Dependências:</b> o que o artefato ainda exige para rodar (libtorch, CUDA, drivers, runtimes)? Os pesos ficam embutidos ou externos?</li>
+<li><b>Ganho:</b> quanto se ganha em latência, vazão e memória em relação ao PyTorch eager, nas mesmas condições?</li>
+</ul>
+<p>O card sugeria começar pela CPU e pela YOLOv8m. As decisões tomadas ao longo do caminho foram: começar pela <b>GPU</b>, que é onde a webcam roda; usar a <b>YOLOv10s</b>, caso de interesse do card e que tem uma vantagem para comparar backends (o head end2end entrega as detecções finais <b>sem NMS</b>, então todo backend faz exatamente o mesmo trabalho); e depois cobrir a CPU e a GPU via Vulkan.</p>
+<h2>2. Hardware</h2><p>Os resultados dependem muito do que o hardware sabe ou não sabe fazer, então vale descrever a máquina em detalhe.</p><div class="table-wrap "><table><thead><tr><th>Componente</th><th>Detalhes</th></tr></thead><tbody><tr><td><b>GPU</b></td><td>NVIDIA GeForce RTX 3050 6GB Laptop: chip GA107, arquitetura Ampere, capacidade 8.6, 20 SMs (2.560 núcleos CUDA e 80 tensor cores de 3ª geração), 6 GB GDDR6, até 2.100 MHz, limite de 95 W. Driver 620.70.</td></tr><tr><td><b>CPU</b></td><td>Intel Core i5-13450HX (Raptor Lake, híbrida): <b>6 P-cores</b> com Hyper-Threading (CPUs lógicas 0–11, até 4,6 GHz) e <b>4 E-cores</b> (CPUs 12–15, até 3,4 GHz), 16 threads, 9,5 MiB de L2 e 20 MiB de L3. Instruções: AVX2, FMA, F16C e <b>AVX-VNNI</b>. Não tem AVX-512, AVX-512 FP16 nem AMX.</td></tr><tr><td><b>GPU integrada</b></td><td>Intel UHD Graphics (Raptor Lake-S, PCI 8086:A78B), até 1.450 MHz, driver Mesa 26.2 (Vulkan 1.4). Suporta FP16; não tem cooperative matrix.</td></tr><tr><td><b>Memória</b></td><td>16 GB (15 GiB visíveis).</td></tr><tr><td><b>Sistema</b></td><td>CachyOS (base Arch), Linux 7.3, GCC 16.2, CMake 4.4. CUDA 13.4 do sistema (usado pelo TensorRT) e CUDA 12.8 das wheels do PyTorch (usado pelo eager e pelo AOTInductor).</td></tr></tbody></table></div>
+<h3>Por que isso importa</h3>
+<ul>
+<li><b>Tensor cores</b> (FP16 e TF32) explicam por que o FP16 quase dobra a vazão na GPU, e por que o TF32 que o TensorRT liga por padrão muda levemente o resultado em FP32.</li>
+<li><b>Cooperative matrix no Vulkan</b> (<code>VK_KHR_cooperative_matrix</code> e <code>VK_NV_cooperative_matrix2</code>) deixa o ncnn usar esses tensor cores sem CUDA. Sem ela, o ncnn FP16 vai de ~9,8 para ~13 ms.</li>
+<li><b>CPU híbrida:</b> se o runtime espalha threads nos E-cores, os P-cores ficam esperando os mais lentos a cada camada. Por isso as medições de CPU usam uma thread por P-core (<code>taskset -c 0,2,4,6,8,10</code>).</li>
+<li><b>FP16 não acelera esta CPU:</b> a F16C só <i>converte</i> entre FP16 e FP32; a conta continua em FP32. Já a <b>AVX-VNNI</b> faz produto escalar de 8 bits no hardware, e é por isso que o INT8 compensa.</li>
+<li><b>Teto teórico em FP32 dos 6 P-cores:</b> 6 núcleos × 32 FLOP/ciclo (duas unidades FMA de 256 bits) × frequência ≈ 800 GFLOPS a ~4,2 GHz. A YOLOv10s faz 21,7 GFLOPs por inferência em 640×640.</li>
+<li><b>O notebook esquenta e reduz o clock:</b> numa sequência de medições sem pausa, a frequência dos P-cores caiu de 4,2 para 3,1 GHz e prejudicou quem rodou por último. Por isso as rodadas 3 e 4 usam resfriamento e ordem trocada entre rodadas.</li>
+</ul>
+
+<h2>3. Método comum</h2>
+<h3>O modelo e o grafo</h3>
+<p>Todos os backends partem do mesmo grafo: a YOLOv10s em modo eval, com as camadas fundidas (convolução + batch norm), entrada estática de <b>1×3×640×640</b>, batch 1, e saída <code>[1, 300, 6]</code> com <code>(x1, y1, x2, y2, score, classe)</code>. Um detalhe só apareceu na prática: nesta versão do Ultralytics, o checkpoint carrega com <code>end2end=False</code> e a saída vinha no formato antigo, <code>[1, 84, 8400]</code>, que exigiria NMS. O exportador liga o head one-to-one antes da fusão e confere o formato.</p>
+<h3>Como a equivalência é validada</h3>
+<ul>
+<li><b>Referência fixa:</b> 8 imagens (<code>bus.jpg</code> e <code>zidane.jpg</code> do Ultralytics e 6 quadros da webcam), pré-processadas uma vez em Python (letterbox 640, preenchimento 114, RGB, /255) e executadas no PyTorch eager com TF32 desligado. Todos os backends leem os mesmos arquivos.</li>
+<li><b>Tolerâncias</b>, contra o eager da mesma precisão: FP32 com caixas até 0,5 px e scores até 0,001; FP16 com caixas até 2 px e scores até 0,005; detecções com score ≥ 0,25 com mesma quantidade, mesma classe e IoU ≥ 0,95. As diferenças são medidas entre detecções pareadas por IoU, não pela posição da linha, porque o TopK pode ordenar de outro jeito linhas com scores quase iguais.</li>
+<li><b>INT8</b> não atinge tolerâncias estritas, então foi julgado por concordância de detecções (IoU ≥ 0,80 e diferença de score ≤ 0,05) e pela perda de mAP50-95 no COCO (no máximo 1,0 ponto).</li>
+<li><b>Pré-processamento em C++</b> é conferido à parte: os runners fazem o próprio letterbox a partir do JPEG e precisam reproduzir as detecções do eager (IoU ≥ 0,90).</li>
+<li>As tolerâncias foram fixadas antes de cada rodada e nunca afrouxadas; falhas são reportadas com os números.</li>
+</ul>
+<h3>Protocolo de benchmark</h3>
+<ul>
+<li>Só a inferência, com a entrada já na memória do dispositivo. GPU: 50 iterações de aquecimento e 500 medidas; CPU: 20 e 200. Cada iteração é sincronizada. FPS = 1000 / latência média.</li>
+<li>Cada variante roda no próprio processo. Configuração igual em todos os lados (cuDNN TF32 ligado, matmul TF32 desligado e autotune desligado, que são os padrões do PyTorch), impressa em cada resultado.</li>
+<li>Nas rodadas 3 e 4: 60 s de resfriamento antes de cada medição, 3 rodadas com a ordem trocada e a mediana como resultado. Um monitor descarta a medição se outro processo estiver usando a CPU.</li>
+</ul>
+<h3>Como o trabalho foi organizado</h3>
+<p>O design de cada rodada foi feito em conjunto e aprovado antes de qualquer implementação. O planejamento, as specs, a revisão e as medições finais ficaram com o orquestrador (Claude); a implementação foi delegada a um agente executor (GPT-6.1 Sol), e os diffs grandes passaram por um revisor independente (GPT-6 Astra). Todo número deste relatório foi medido de novo pelo orquestrador. Dois dos achados mais importantes, o TF32 assimétrico da rodada 1 e a causa da falha do TensorRT FP32, não foram apontados pelo revisor e saíram dessa conferência; a deriva térmica da rodada 3 foi medida pelo orquestrador e também apontada como risco pelo revisor.</p>
+
+<h2>4. Ponto de partida: a webcam</h2>
+<p>Antes de compilar qualquer coisa, a YOLOv10s rodou com o <code>predict</code> do Ultralytics na webcam do notebook, numa janela com FPS e memória de GPU. O loop ficou em <b>15 FPS</b>, mas a câmera sozinha também entregava 15 FPS: com pouca luz, o recurso <code>exposure_dynamic_framerate</code> dobra o tempo de exposição. Com ele desligado, o loop chegou a <b>30 FPS</b> (o máximo da câmera), com o modelo levando cerca de 13 ms por quadro e 232 MiB de memória de GPU. Como a câmera limita o loop muito antes do modelo, o experimento passou a medir <b>só a inferência</b>.</p>
+<p class="small">O <code>predict</code> levava cerca de 7 ms porque faz letterbox retangular: o quadro 1280×720 vira 640×384. Nas rodadas a entrada é sempre 640×640, cerca de 1,7× mais pixels, por isso o eager FP32 fica perto de 10 ms.</p>
+
+<h2 class="newpage">5. Rodada 1: AOTInductor na GPU</h2>
+<p>O AOTInductor é o compilador ahead-of-time do PyTorch 2. O fluxo é <code>torch.export</code> → <code>aoti_compile_and_package</code>, que gera um pacote <code>.pt2</code> com kernels Triton compilados, um wrapper C++ e os pesos embutidos. Um runner C++ (<code>yolo_aoti</code>) carrega o pacote com <code>AOTIModelPackageLoader</code> e executa sem Python, mas ainda com a libtorch.</p>
+<h3>Problemas resolvidos</h3>
+<ul>
+<li>O CUDA do sistema (13.4) é diferente do CUDA do PyTorch (12.8), e o AOTInductor escolhia sozinho os headers do <code>/opt/cuda</code>. Solução: um <code>CUDA_HOME</code> local com os headers e o runtime das wheels 12.8; o header <code>nv/target</code> veio da wheel <code>nvidia-cuda-cccl-cu12</code>. O build final não toca no <code>/opt/cuda</code>.</li>
+<li>O CMake da libtorch tenta habilitar CUDA e procurar o nvcc. O runner só tem <code>.cpp</code>, então as bibliotecas são importadas direto da wheel.</li>
+<li>O GCC 16, mais novo que o suportado oficialmente, compilou sem patch nem flags especiais.</li>
+<li><b>Comparação justa:</b> a primeira medição deu 1,29× em FP32, mas o eager estava com TF32 desligado e o C++ com o padrão da libtorch, que liga TF32 nas convoluções. Com a mesma configuração dos dois lados, o eager FP32 cai de 10,9 para 9,9 ms e o ganho real fica em 1,18×.</li>
+</ul>
+<p><b>Resultado:</b> 16/16 validações PASS (maior diferença em FP32: 0,035 px nas caixas e 0,0006 no score). Pacotes de 29,8 MiB (FP32) e 16,0 MiB (FP16), compilados em 10 a 13 s com cache. FP32 a 8,46 ms (1,18×) e FP16 a 3,92 ms (1,43×). Ponto fraco: a primeira inferência leva cerca de 2 s.</p>
+
+<h2>6. Rodada 2: TensorRT na GPU</h2>
+<p>Caminho: <code>torch.onnx.export</code> (opset 18) → ONNX → <code>trtexec --stronglyTyped</code> → engine <code>.plan</code>. O runner <code>yolo_trt</code> desserializa o engine e chama <code>enqueueV3</code> num stream CUDA. Ele depende só de <code>libnvinfer</code> e do runtime CUDA 13.4, <b>sem libtorch e sem Python</b>. O TensorRT 11.4 veio do AUR. No TensorRT 11 o FP16 por flag do builder ficou obsoleto, então o FP16 vem do próprio ONNX exportado em half.</p>
+<h3>O caso do TF32</h3>
+<p>O engine FP32 padrão falhou numa única imagem (<code>webcam_04</code>, uma única detecção): a diferença de score foi 0,0022 no primeiro build e 0,0019 num rebuild, contra o limite de 0,001, com a mesma classe e caixas praticamente iguais (IoU 0,9998). O ONNX Runtime, rodando o mesmo ONNX, bate com o eager a menos de 2e-7, e o <code>trtexec</code> reproduz o erro sozinho, então a diferença não vem da exportação nem do runner. A causa é que o TensorRT <b>permite TF32 por padrão</b> em tensores FP32, e o engine contém kernels de convolução e GEMM em TF32, enquanto a referência é FP32 estrito. Um engine do mesmo ONNX com <code>--noTF32</code> passa nas 8 imagens com 3e-5 px de diferença, praticamente bit a bit, por cerca de 0,5 ms a mais. O FAIL do engine padrão foi mantido: é uma questão de tolerância de score, não um erro de detecção nesta amostra.</p>
+<p><b>Resultado:</b> FP32 a 7,39 ms (1,36×; 7,86 ms sem TF32) e <b>FP16 a 2,94 ms (340 FPS, 1,90×)</b>. Menor RSS entre eager, AOTInductor e TensorRT (~650 MiB). O custo é o build de 55 a 60 s por engine e um <code>.plan</code> de 80 a 110 MiB que vale só para esta GPU e esta versão do TensorRT.</p>
+
+<h2 class="newpage">7. Rodada 3: CPU</h2>
+<p>Objetivo: medir o desempenho de referência em CPU com runtimes prontos, comparado com o eager e com o teto teórico. Esse é o alvo para um futuro engine próprio em C++. FP16 ficou de fora porque não acelera esta CPU; o tipo reduzido testado foi <b>INT8 com AVX-VNNI</b>, quantizado com o NNCF (OpenVINO). O benchmark foi em Python, porque com dezenas de ms por inferência o custo da chamada é desprezível (menos de 0,1%).</p>
+<h3>INT8 e acurácia</h3>
+<p>A calibração usou 300 imagens do COCO val2017 (posições 501 a 800 por id), disjuntas das 500 de avaliação. O preset <code>performance</code> do NNCF falhou no critério de detecção; excluir o pós-processamento da quantização piorou o mAP; o preset <code>mixed</code> passou nos dois critérios. Modelo de 28,0 MiB (FP32) para 7,7 MiB (INT8).</p>
+<div class="table-wrap "><table><thead><tr><th>Variante (500 imagens do COCO val2017)</th><th class="num">mAP50-95</th><th class="num">mAP50</th></tr></thead><tbody><tr><td>PyTorch eager FP32</td><td class="num">49,33</td><td class="num">65,26</td></tr><tr><td>OpenVINO FP32</td><td class="num">49,33</td><td class="num">65,26</td></tr><tr><td>OpenVINO INT8</td><td class="num">49,02 (−0,31)</td><td class="num">65,31</td></tr></tbody></table></div>
+<h3>Controle térmico</h3>
+<p>A primeira tabela foi medida com as 5 variantes em sequência, e a frequência dos P-cores caiu de 4,21 para 3,09 GHz ao longo da fila. Rodando cada variante depois de um resfriamento, o INT8 foi de 19,35 ms (a 3,36 GHz) para 15,17 ms (a 4,19 GHz). O script final faz 60 s de resfriamento antes de cada medição, 3 rodadas com ordem trocada e usa a mediana; as 15 medições foram aceitas, com variação de no máximo 3%. A suposta lentidão do OpenVINO no modo padrão (27%) era só efeito de ter rodado por último.</p>
+<div class="table-wrap "><table><thead><tr><th>Variante</th><th class="num">Média</th><th class="num">p95</th><th class="num">FPS</th><th class="num">Ganho</th><th class="num">% do pico FP32</th><th class="num">RAM (MiB)</th><th>Modelo</th></tr></thead><tbody><tr><td>PyTorch eager FP32</td><td class="num">55,56 ms</td><td class="num">64,51</td><td class="num">18,0</td><td class="num">1,00×</td><td class="num">47%</td><td class="num">929</td><td>15,9 MiB</td></tr><tr><td>ncnn FP32 (rodada 4)</td><td class="num">56,89 ms</td><td class="num">60,57</td><td class="num">17,6</td><td class="num">0,98×</td><td class="num">—</td><td class="num">223</td><td>27,8 MiB</td></tr><tr><td>ONNX Runtime FP32</td><td class="num">43,63 ms</td><td class="num">49,96</td><td class="num">22,9</td><td class="num">1,27×</td><td class="num">63%</td><td class="num">219</td><td>28,4 MiB</td></tr><tr><td>OpenVINO FP32 (6 P-cores)</td><td class="num">40,20 ms</td><td class="num">45,73</td><td class="num">24,9</td><td class="num">1,38×</td><td class="num">70%</td><td class="num">215</td><td>28,0 MiB</td></tr><tr><td>OpenVINO FP32 padrão</td><td class="num">39,84 ms</td><td class="num">41,12</td><td class="num">25,1</td><td class="num">1,39×</td><td class="num">70%</td><td class="num">214</td><td>28,0 MiB</td></tr><tr><td><b>OpenVINO INT8</b></td><td class="num"><b>14,91 ms</b></td><td class="num">16,04</td><td class="num"><b>67,1</b></td><td class="num"><b>3,73×</b></td><td class="num">—</td><td class="num">172</td><td>7,7 MiB</td></tr></tbody></table></div><div class="figure"><svg xmlns:xlink="http://www.w3.org/1999/xlink" width="506.308906pt" height="187.904703pt" viewBox="0 0 506.308906 187.904703" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-11-12T00:20:38.564379</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.11.2, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 187.904703 
+L 506.308906 187.904703 
+L 506.308906 0 
+L 0 0 
+L 0 187.904703 
+z
+" style="fill: none"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 102.782656 151.344 
+L 493.382656 151.344 
+L 493.382656 7.2 
+L 102.782656 7.2 
+L 102.782656 151.344 
+z
+" style="fill: none"/>
+   </g>
+   <g id="matplotlib.axis_1">
+    <g id="xtick_1">
+     <g id="line2d_1">
+      <path d="M 102.782656 151.344 
+L 102.782656 7.2 
+" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_2">
+      <defs>
+       <path id="md438647ecb" d="M 0 0 
+L 0 3.5 
+" style="stroke: #6f6f6c; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#md438647ecb" x="102.782656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_1">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="102.782656" y="165.181891" transform="rotate(-0 102.782656 165.181891)">0</text>
+     </g>
+    </g>
+    <g id="xtick_2">
+     <g id="line2d_3">
+      <path d="M 151.607656 151.344 
+L 151.607656 7.2 
+" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_4">
+      <g>
+       <use xlink:href="#md438647ecb" x="151.607656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_2">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="151.607656" y="165.181891" transform="rotate(-0 151.607656 165.181891)">10</text>
+     </g>
+    </g>
+    <g id="xtick_3">
+     <g id="line2d_5">
+      <path d="M 200.432656 151.344 
+L 200.432656 7.2 
+" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_6">
+      <g>
+       <use xlink:href="#md438647ecb" x="200.432656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_3">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="200.432656" y="165.181891" transform="rotate(-0 200.432656 165.181891)">20</text>
+     </g>
+    </g>
+    <g id="xtick_4">
+     <g id="line2d_7">
+      <path d="M 249.257656 151.344 
+L 249.257656 7.2 
+" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_8">
+      <g>
+       <use xlink:href="#md438647ecb" x="249.257656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_4">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="249.257656" y="165.181891" transform="rotate(-0 249.257656 165.181891)">30</text>
+     </g>
+    </g>
+    <g id="xtick_5">
+     <g id="line2d_9">
+      <path d="M 298.082656 151.344 
+L 298.082656 7.2 
+" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_10">
+      <g>
+       <use xlink:href="#md438647ecb" x="298.082656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_5">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="298.082656" y="165.181891" transform="rotate(-0 298.082656 165.181891)">40</text>
+     </g>
+    </g>
+    <g id="xtick_6">
+     <g id="line2d_11">
+      <path d="M 346.907656 151.344 
+L 346.907656 7.2 
+" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_12">
+      <g>
+       <use xlink:href="#md438647ecb" x="346.907656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_6">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="346.907656" y="165.181891" transform="rotate(-0 346.907656 165.181891)">50</text>
+     </g>
+    </g>
+    <g id="xtick_7">
+     <g id="line2d_13">
+      <path d="M 395.732656 151.344 
+L 395.732656 7.2 
+" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_14">
+      <g>
+       <use xlink:href="#md438647ecb" x="395.732656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_7">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="395.732656" y="165.181891" transform="rotate(-0 395.732656 165.181891)">60</text>
+     </g>
+    </g>
+    <g id="xtick_8">
+     <g id="line2d_15">
+      <path d="M 444.557656 151.344 
+L 444.557656 7.2 
+" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_16">
+      <g>
+       <use xlink:href="#md438647ecb" x="444.557656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_8">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="444.557656" y="165.181891" transform="rotate(-0 444.557656 165.181891)">70</text>
+     </g>
+    </g>
+    <g id="xtick_9">
+     <g id="line2d_17">
+      <path d="M 493.382656 151.344 
+L 493.382656 7.2 
+" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_18">
+      <g>
+       <use xlink:href="#md438647ecb" x="493.382656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_9">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="493.382656" y="165.181891" transform="rotate(-0 493.382656 165.181891)">80</text>
+     </g>
+    </g>
+    <g id="text_10">
+     <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #4a4a48" x="298.082656" y="178.542594" transform="rotate(-0 298.082656 178.542594)">Inferências por segundo (i5-13450HX, 6 threads nos P-cores; medianas)</text>
+    </g>
+   </g>
+   <g id="matplotlib.axis_2">
+    <g id="ytick_1">
+     <g id="line2d_19"/>
+     <g id="text_11">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="99.282656" y="25.717384" transform="rotate(-0 99.282656 25.717384)">PyTorch eager FP32</text>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_20"/>
+     <g id="text_12">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="99.282656" y="54.203989" transform="rotate(-0 99.282656 54.203989)">ncnn FP32</text>
+     </g>
+    </g>
+    <g id="ytick_3">
+     <g id="line2d_21"/>
+     <g id="text_13">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="99.282656" y="82.691297" transform="rotate(-0 99.282656 82.691297)">ONNX Runtime FP32</text>
+     </g>
+    </g>
+    <g id="ytick_4">
+     <g id="line2d_22"/>
+     <g id="text_14">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="99.282656" y="111.177902" transform="rotate(-0 99.282656 111.177902)">OpenVINO FP32</text>
+     </g>
+    </g>
+    <g id="ytick_5">
+     <g id="line2d_23"/>
+     <g id="text_15">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="99.282656" y="139.664858" transform="rotate(-0 99.282656 139.664858)">OpenVINO INT8</text>
+     </g>
+    </g>
+   </g>
+   <g id="patch_3">
+    <path d="M 102.782656 151.344 
+L 493.382656 151.344 
+" style="fill: none; stroke: #e4e4e1; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 102.782656 13.752 
+L 190.667656 13.752 
+L 190.667656 30.844174 
+L 102.782656 30.844174 
+z
+" clip-path="url(#pbb883c71be)" style="fill: #2a78d6"/>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="194.573656" y="24.506095" transform="rotate(-0 194.573656 24.506095)">18,0</text>
+   </g>
+   <g id="patch_5">
+    <path d="M 102.782656 42.238957 
+L 188.714656 42.238957 
+L 188.714656 59.33113 
+L 102.782656 59.33113 
+z
+" clip-path="url(#pbb883c71be)" style="fill: #2a78d6"/>
+   </g>
+   <g id="text_17">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="192.620656" y="52.993051" transform="rotate(-0 192.620656 52.993051)">17,6</text>
+   </g>
+   <g id="patch_6">
+    <path d="M 102.782656 70.725913 
+L 214.591906 70.725913 
+L 214.591906 87.818087 
+L 102.782656 87.818087 
+z
+" clip-path="url(#pbb883c71be)" style="fill: #2a78d6"/>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="218.497906" y="81.480008" transform="rotate(-0 218.497906 81.480008)">22,9</text>
+   </g>
+   <g id="patch_7">
+    <path d="M 102.782656 99.21287 
+L 224.356906 99.21287 
+L 224.356906 116.305043 
+L 102.782656 116.305043 
+z
+" clip-path="url(#pbb883c71be)" style="fill: #2a78d6"/>
+   </g>
+   <g id="text_19">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="228.262906" y="109.966964" transform="rotate(-0 228.262906 109.966964)">24,9</text>
+   </g>
+   <g id="patch_8">
+    <path d="M 102.782656 127.699826 
+L 430.398406 127.699826 
+L 430.398406 144.792 
+L 102.782656 144.792 
+z
+" clip-path="url(#pbb883c71be)" style="fill: #2a78d6"/>
+   </g>
+   <g id="text_20">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="434.304406" y="138.453921" transform="rotate(-0 434.304406 138.453921)">67,1</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="pbb883c71be">
+   <rect x="102.782656" y="7.2" width="390.6" height="144.144"/>
+  </clipPath>
+ </defs>
+</svg>
+</div><p class="small">Medianas de 3 rodadas com controle térmico, 6 threads fixadas nos P-cores. % do pico = 21,7 GFLOPs / latência, dividido por 6 × 32 FLOP/ciclo × frequência medida. O INT8 equivale a 177% do pico FP32 em vazão, o que não é utilização do hardware FP32.</p>
+<h2>8. Rodada 4: ncnn e Vulkan</h2>
+<p>O Vulkan é a API de GPU independente de fabricante: o mesmo binário roda em NVIDIA, AMD, Intel e celular, sem CUDA. O modelo foi convertido com o <code>pnnx</code> para o formato do ncnn (<code>.param</code> + <code>.bin</code>, 27,8 MiB). O ncnn não suporta o TopK e o Gather do head do YOLOv10, então o grafo termina no head bruto e a seleção dos 300 melhores roda em C++, <b>batendo bit a bit</b> com o Python. Esse pós-processamento custa de 0,9 a 2,5 ms e está somado aos resultados. O runner <code>yolo_ncnn</code> depende só do ncnn: sem Torch, sem Python e sem CUDA.</p>
+<p>A <b>cooperative matrix</b> foi confirmada em uso na RTX 3050: os shaders de convolução usam <code>OpCooperativeMatrixMulAddKHR</code>, e desligá-la leva o FP16 de 9,8 para 13,0 ms (medições únicas).</p>
+<div class="table-wrap "><table><thead><tr><th>Variante ncnn (medianas)</th><th class="num">Entrada na GPU</th><th class="num">Entrada na CPU (com cópias)</th><th class="num">GPU (MiB)</th><th>Validação</th></tr></thead><tbody><tr><td><b>RTX 3050 FP16</b> (cooperative matrix)</td><td class="num"><b>9,69 ms (103 FPS)</b></td><td class="num">10,17 ms</td><td class="num">~124</td><td>8/8</td></tr><tr><td>RTX 3050 FP32</td><td class="num">18,55 ms (54 FPS)</td><td class="num">19,19 ms</td><td class="num">~196</td><td>8/8</td></tr><tr><td>CPU FP32 (6 P-cores)</td><td class="num">—</td><td class="num">56,89 ms</td><td class="num">—</td><td>8/8</td></tr><tr><td>Intel integrada FP16 <span class='small'>(uma rodada)</span></td><td class="num">229,7 ms</td><td class="num">230,5 ms</td><td class="num">—</td><td>6/8</td></tr><tr><td>Intel integrada FP32 <span class='small'>(uma rodada)</span></td><td class="num">433,0 ms</td><td class="num">437,0 ms</td><td class="num">—</td><td>8/8</td></tr></tbody></table></div>
+<div class="note"><b>GPU integrada:</b> o benchmark controlado da Intel foi <b>interrompido por decisão do Nicolas, por ser muito lenta</b>: cada medição levava de 2 a 4 minutos. Os números acima são de uma única rodada, sem mediana. Em FP16 ela é cerca de 15× mais lenta que a CPU com OpenVINO INT8. Duas imagens falharam em FP16 por diferença de score (0,0051 e 0,0093 contra 0,005); com FP16 só no armazenamento e a conta em FP32, passaram 8/8.</div>
+<h2 class='newpage'>9. Comparação geral</h2><div class="figure"><svg xmlns:xlink="http://www.w3.org/1999/xlink" width="439.145pt" height="226.712703pt" viewBox="0 0 439.145 226.712703" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-11-12T00:20:38.529684</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.11.2, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 226.712703 
+L 439.145 226.712703 
+L 439.145 0 
+L 0 0 
+L 0 226.712703 
+z
+" style="fill: none"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 32.755625 190.152 
+L 423.355625 190.152 
+L 423.355625 7.2 
+L 32.755625 7.2 
+L 32.755625 190.152 
+z
+" style="fill: none"/>
+   </g>
+   <g id="matplotlib.axis_1">
+    <g id="xtick_1">
+     <g id="line2d_1">
+      <path d="M 32.755625 190.152 
+L 32.755625 7.2 
+" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_2">
+      <defs>
+       <path id="mbad01983c1" d="M 0 0 
+L 0 3.5 
+" style="stroke: #6f6f6c; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#mbad01983c1" x="32.755625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_1">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="32.755625" y="203.989891" transform="rotate(-0 32.755625 203.989891)">0</text>
+     </g>
+    </g>
+    <g id="xtick_2">
+     <g id="line2d_3">
+      <path d="M 81.580625 190.152 
+L 81.580625 7.2 
+" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_4">
+      <g>
+       <use xlink:href="#mbad01983c1" x="81.580625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_2">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="81.580625" y="203.989891" transform="rotate(-0 81.580625 203.989891)">50</text>
+     </g>
+    </g>
+    <g id="xtick_3">
+     <g id="line2d_5">
+      <path d="M 130.405625 190.152 
+L 130.405625 7.2 
+" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_6">
+      <g>
+       <use xlink:href="#mbad01983c1" x="130.405625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_3">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="130.405625" y="203.989891" transform="rotate(-0 130.405625 203.989891)">100</text>
+     </g>
+    </g>
+    <g id="xtick_4">
+     <g id="line2d_7">
+      <path d="M 179.230625 190.152 
+L 179.230625 7.2 
+" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_8">
+      <g>
+       <use xlink:href="#mbad01983c1" x="179.230625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_4">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="179.230625" y="203.989891" transform="rotate(-0 179.230625 203.989891)">150</text>
+     </g>
+    </g>
+    <g id="xtick_5">
+     <g id="line2d_9">
+      <path d="M 228.055625 190.152 
+L 228.055625 7.2 
+" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_10">
+      <g>
+       <use xlink:href="#mbad01983c1" x="228.055625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_5">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="228.055625" y="203.989891" transform="rotate(-0 228.055625 203.989891)">200</text>
+     </g>
+    </g>
+    <g id="xtick_6">
+     <g id="line2d_11">
+      <path d="M 276.880625 190.152 
+L 276.880625 7.2 
+" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_12">
+      <g>
+       <use xlink:href="#mbad01983c1" x="276.880625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_6">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="276.880625" y="203.989891" transform="rotate(-0 276.880625 203.989891)">250</text>
+     </g>
+    </g>
+    <g id="xtick_7">
+     <g id="line2d_13">
+      <path d="M 325.705625 190.152 
+L 325.705625 7.2 
+" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_14">
+      <g>
+       <use xlink:href="#mbad01983c1" x="325.705625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_7">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="325.705625" y="203.989891" transform="rotate(-0 325.705625 203.989891)">300</text>
+     </g>
+    </g>
+    <g id="xtick_8">
+     <g id="line2d_15">
+      <path d="M 374.530625 190.152 
+L 374.530625 7.2 
+" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_16">
+      <g>
+       <use xlink:href="#mbad01983c1" x="374.530625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_8">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="374.530625" y="203.989891" transform="rotate(-0 374.530625 203.989891)">350</text>
+     </g>
+    </g>
+    <g id="xtick_9">
+     <g id="line2d_17">
+      <path d="M 423.355625 190.152 
+L 423.355625 7.2 
+" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_18">
+      <g>
+       <use xlink:href="#mbad01983c1" x="423.355625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_9">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="423.355625" y="203.989891" transform="rotate(-0 423.355625 203.989891)">400</text>
+     </g>
+    </g>
+    <g id="text_10">
+     <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #4a4a48" x="228.055625" y="217.350594" transform="rotate(-0 228.055625 217.350594)">Inferências por segundo (só o modelo, 640×640, RTX 3050)</text>
+    </g>
+   </g>
+   <g id="matplotlib.axis_2">
+    <g id="ytick_1">
+     <g id="line2d_19"/>
+     <g id="text_11">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="29.255625" y="56.402638" transform="rotate(-0 29.255625 56.402638)">FP32</text>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_20"/>
+     <g id="text_12">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="29.255625" y="147.787253" transform="rotate(-0 29.255625 147.787253)">FP16</text>
+     </g>
+    </g>
+   </g>
+   <g id="patch_3">
+    <path d="M 32.755625 190.152 
+L 423.355625 190.152 
+" style="fill: none; stroke: #e4e4e1; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 32.755625 15.516 
+L 130.405625 15.516 
+L 130.405625 32.879077 
+L 32.755625 32.879077 
+z
+" clip-path="url(#pcd2c11ec0b)" style="fill: #2a78d6"/>
+   </g>
+   <g id="text_13">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="134.311625" y="26.405546" transform="rotate(-0 134.311625 26.405546)">100</text>
+   </g>
+   <g id="patch_5">
+    <path d="M 32.755625 34.706769 
+L 147.982625 34.706769 
+L 147.982625 52.069846 
+L 32.755625 52.069846 
+z
+" clip-path="url(#pcd2c11ec0b)" style="fill: #eb6834"/>
+   </g>
+   <g id="text_14">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="151.888625" y="45.596316" transform="rotate(-0 151.888625 45.596316)">118</text>
+   </g>
+   <g id="patch_6">
+    <path d="M 32.755625 53.897538 
+L 164.583125 53.897538 
+L 164.583125 71.260615 
+L 32.755625 71.260615 
+z
+" clip-path="url(#pcd2c11ec0b)" style="fill: #1baf7a"/>
+   </g>
+   <g id="text_15">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="168.489125" y="64.787085" transform="rotate(-0 168.489125 64.787085)">135</text>
+   </g>
+   <g id="patch_7">
+    <path d="M 32.755625 73.088308 
+L 85.486625 73.088308 
+L 85.486625 90.451385 
+L 32.755625 90.451385 
+z
+" clip-path="url(#pcd2c11ec0b)" style="fill: #eda100"/>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="89.392625" y="83.977854" transform="rotate(-0 89.392625 83.977854)">54</text>
+   </g>
+   <g id="patch_8">
+    <path d="M 32.755625 106.900615 
+L 207.549125 106.900615 
+L 207.549125 124.263692 
+L 32.755625 124.263692 
+z
+" clip-path="url(#pcd2c11ec0b)" style="fill: #2a78d6"/>
+   </g>
+   <g id="text_17">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="211.455125" y="117.790162" transform="rotate(-0 211.455125 117.790162)">179</text>
+   </g>
+   <g id="patch_9">
+    <path d="M 32.755625 126.091385 
+L 281.763125 126.091385 
+L 281.763125 143.454462 
+L 32.755625 143.454462 
+z
+" clip-path="url(#pcd2c11ec0b)" style="fill: #eb6834"/>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="285.669125" y="136.980931" transform="rotate(-0 285.669125 136.980931)">255</text>
+   </g>
+   <g id="patch_10">
+    <path d="M 32.755625 145.282154 
+L 364.765625 145.282154 
+L 364.765625 162.645231 
+L 32.755625 162.645231 
+z
+" clip-path="url(#pcd2c11ec0b)" style="fill: #1baf7a"/>
+   </g>
+   <g id="text_19">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="368.671625" y="156.1717" transform="rotate(-0 368.671625 156.1717)">340</text>
+   </g>
+   <g id="patch_11">
+    <path d="M 32.755625 164.472923 
+L 133.335125 164.472923 
+L 133.335125 181.836 
+L 32.755625 181.836 
+z
+" clip-path="url(#pcd2c11ec0b)" style="fill: #eda100"/>
+   </g>
+   <g id="text_20">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="137.241125" y="175.362469" transform="rotate(-0 137.241125 175.362469)">103</text>
+   </g>
+   <g id="legend_1">
+    <g id="patch_12">
+     <path d="M 293.374687 21.308672 
+L 310.374687 21.308672 
+L 310.374687 15.358672 
+L 293.374687 15.358672 
+z
+" style="fill: #2a78d6"/>
+    </g>
+    <g id="text_21">
+     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #4a4a48" x="317.174688" y="21.308672" transform="rotate(-0 317.174688 21.308672)">PyTorch eager (Python)</text>
+    </g>
+    <g id="patch_13">
+     <path d="M 293.374687 34.059336 
+L 310.374687 34.059336 
+L 310.374687 28.109336 
+L 293.374687 28.109336 
+z
+" style="fill: #eb6834"/>
+    </g>
+    <g id="text_22">
+     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #4a4a48" x="317.174688" y="34.059336" transform="rotate(-0 317.174688 34.059336)">AOTInductor (C++)</text>
+    </g>
+    <g id="patch_14">
+     <path d="M 293.374687 46.81 
+L 310.374687 46.81 
+L 310.374687 40.86 
+L 293.374687 40.86 
+z
+" style="fill: #1baf7a"/>
+    </g>
+    <g id="text_23">
+     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #4a4a48" x="317.174688" y="46.81" transform="rotate(-0 317.174688 46.81)">TensorRT (C++)</text>
+    </g>
+    <g id="patch_15">
+     <path d="M 293.374687 59.560664 
+L 310.374687 59.560664 
+L 310.374687 53.610664 
+L 293.374687 53.610664 
+z
+" style="fill: #eda100"/>
+    </g>
+    <g id="text_24">
+     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #4a4a48" x="317.174688" y="59.560664" transform="rotate(-0 317.174688 59.560664)">ncnn Vulkan (C++)</text>
+    </g>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="pcd2c11ec0b">
+   <rect x="32.755625" y="7.2" width="390.6" height="182.952"/>
+  </clipPath>
+ </defs>
+</svg>
+</div><div class="table-wrap "><table><thead><tr><th>Dispositivo</th><th>Backend</th><th>Precisão</th><th class="num">Latência</th><th class="num">FPS</th><th>Dependências em execução</th><th>Artefato</th></tr></thead><tbody><tr><td>RTX 3050</td><td>PyTorch eager</td><td>FP32 / FP16</td><td class="num">10,02 / 5,59 ms</td><td class="num">100 / 179</td><td>Python, PyTorch, CUDA 12.8</td><td>.pt 15,9 MiB</td></tr><tr><td>RTX 3050</td><td>AOTInductor</td><td>FP32 / FP16</td><td class="num">8,46 / 3,92 ms</td><td class="num">118 / 255</td><td>libtorch, CUDA 12.8; sem Python</td><td>.pt2 29,8 / 16,0 MiB</td></tr><tr><td>RTX 3050</td><td><b>TensorRT</b></td><td>FP32 / FP16</td><td class="num"><b>7,39 / 2,94 ms</b></td><td class="num"><b>135 / 340</b></td><td>libnvinfer, CUDA 13.4</td><td>.plan 108,5 / 81,6 MiB</td></tr><tr><td>RTX 3050</td><td>ncnn Vulkan</td><td>FP32 / FP16</td><td class="num">18,55 / 9,69 ms</td><td class="num">54 / 103</td><td>libncnn, loader Vulkan</td><td>27,8 MiB</td></tr><tr><td>CPU</td><td>ONNX Runtime</td><td>FP32</td><td class="num">43,63 ms</td><td class="num">22,9</td><td>libonnxruntime</td><td>.onnx 28,4 MiB</td></tr><tr><td>CPU</td><td>OpenVINO</td><td>FP32 / INT8</td><td class="num">40,20 / <b>14,91 ms</b></td><td class="num">24,9 / <b>67,1</b></td><td>runtime OpenVINO</td><td>IR 28,0 / 7,7 MiB</td></tr><tr><td>CPU</td><td>ncnn</td><td>FP32</td><td class="num">56,89 ms</td><td class="num">17,6</td><td>libncnn</td><td>27,8 MiB</td></tr><tr><td>GPU integrada</td><td>ncnn Vulkan</td><td>FP32 / FP16</td><td class="num">~433 / ~230 ms</td><td class="num">2,3 / 4,4</td><td>libncnn, loader Vulkan</td><td>27,8 MiB</td></tr></tbody></table></div><p class="small">As linhas de eager, AOTInductor e TensorRT vêm de uma mesma sessão sem pausas (variação esperada de cerca de 3%); as de CPU e ncnn são medianas com controle térmico. Comparações entre sessões são aproximadas.</p><h3>Validação consolidada</h3><div class="table-wrap "><table><thead><tr><th>Artefato</th><th>PASS</th><th>Observação</th></tr></thead><tbody><tr><td>AOTInductor FP32 / FP16</td><td>8/8 · 8/8</td><td>maior diferença FP32: 0,035 px, score 0,0006</td></tr><tr><td>TensorRT FP32 padrão</td><td><span class='warn'>7/8</span></td><td>TF32: score 0,0019–0,0022 numa imagem (limite 0,001)</td></tr><tr><td>TensorRT FP32 sem TF32 / FP16</td><td>8/8 · 8/8</td><td>sem TF32: 3e-5 px, praticamente bit a bit</td></tr><tr><td>CPU: eager, ONNX Runtime, OpenVINO FP32 (2 configurações)</td><td>32/32</td><td>tolerâncias estritas</td></tr><tr><td>OpenVINO INT8</td><td>8/8</td><td>critério INT8; mAP −0,31 ponto</td></tr><tr><td>ncnn RTX 3050 FP32 / FP16</td><td>8/8 · 8/8</td><td>pós-processamento em C++ bit a bit</td></tr><tr><td>ncnn Intel FP32 / FP16</td><td>8/8 · <span class='warn'>6/8</span></td><td>FP16: score 0,0051 e 0,0093 (limite 0,005)</td></tr><tr><td>ncnn CPU FP32</td><td>8/8</td><td></td></tr><tr><td><b>Total</b></td><td><b>117/120</b></td><td>o <code>detect</code> com pré-processamento em C++ passou em todos os artefatos</td></tr></tbody></table></div>
+<h2>10. Problemas e lições</h2>
+<ul>
+<li><b>Configuração assimétrica distorce comparações.</b> O TF32 ligado de um lado e desligado do outro inflou o ganho do AOTInductor de 1,18× para 1,29×. Toda medição passou a imprimir a configuração usada.</li>
+<li><b>A temperatura do notebook é uma variável.</b> Medições em sequência penalizaram quem rodou por último em até 25%. Resfriamento, ordem trocada e mediana resolveram.</li>
+<li><b>O ambiente é ruidoso.</b> Navegador, builds e testes de outros projetos invalidam medições de CPU; o monitor de carga foi essencial.</li>
+<li><b>Dois CUDAs convivem</b> se ficarem em processos separados e se o build do AOTInductor apontar para os headers das wheels.</li>
+<li><b>Instalar o TensorRT pelo AUR</b> exigiu atualizar o sistema (mirror desatualizado), reiniciar (driver novo) e compilar com <code>-j1</code> (corrida entre as wheels Python no build paralelo).</li>
+<li><b>Exportação não é trivial:</b> o head end2end precisa ser ligado antes da fusão; o ncnn não tem TopK; o TensorRT 11 só aceita FP16 vindo do próprio ONNX.</li>
+</ul>
+
+<h2>11. Conclusão</h2>
+<h3>Respostas às perguntas</h3>
+<ul>
+<li><b>Viabilidade: sim.</b> A YOLOv10s exportou e compilou em todos os caminhos sem operações customizadas (no ncnn, com o TopK em C++). As saídas ficaram dentro das tolerâncias, com duas exceções de causa conhecida: o TF32 do TensorRT e o FP16 na GPU integrada.</li>
+<li><b>Dependências: dependem do backend.</b> O AOTInductor elimina o Python, mas não a libtorch. O TensorRT deixa só <code>libnvinfer</code> e o runtime CUDA. O ncnn deixa só a própria biblioteca e o loader Vulkan, e roda em qualquer GPU. Em todos os casos os pesos ficam embutidos no artefato.</li>
+<li><b>Ganho: real e maior em precisão reduzida.</b> Na GPU NVIDIA, o TensorRT FP16 dá 1,90× sobre o eager. Na CPU, o OpenVINO INT8 dá 3,73× sobre o eager e 2,70× sobre o OpenVINO FP32, perdendo só 0,31 ponto de mAP. Já o Vulkan na NVIDIA ficou abaixo do eager (0,58× em FP16).</li>
+</ul>
+<h3>O que usar em cada alvo</h3>
+<ul>
+<li><b>GPU NVIDIA:</b> TensorRT, se for aceitável gerar o engine por GPU e por versão. AOTInductor, se o projeto já está no PyTorch e quer build rápido.</li>
+<li><b>CPU x86:</b> OpenVINO INT8, que dá 67 FPS nesta CPU, mais que os 30 FPS da webcam.</li>
+<li><b>GPU de qualquer fabricante:</b> ncnn com Vulkan funciona e é leve, mas paga caro na NVIDIA; vale quando CUDA não é opção.</li>
+<li><b>GPU integrada desta máquina:</b> não vale a pena para este modelo; a CPU é muito mais rápida.</li>
+</ul>
+<p>Para a integração com a Enty (PBI-096), o resultado sugere um backend em torno de um formato intermediário (ONNX) e de um runtime nativo trocável por alvo, já que o melhor caminho muda conforme o hardware.</p>
+<h3>Limitações</h3>
+<ul>
+<li>Uma única máquina, sem clock travado. Só batch 1 e entrada estática 640×640.</li>
+<li>As 8 imagens de validação conferem equivalência numérica, não acurácia; a acurácia (mAP) só foi medida na comparação INT8 da CPU.</li>
+<li>Os artefatos do TensorRT e do AOTInductor são específicos da arquitetura da GPU (e, no TensorRT, da versão).</li>
+</ul>
+<h3>Próximo passo: um engine próprio em C++</h3>
+<p>Escrever, a partir do ONNX, um engine de inferência em C++ para a CPU: primeiro uma versão de referência validada com o mesmo código comum, depois um micro-kernel de GEMM com AVX2, fusão convolução + SiLU, layout blocado e threads, e por fim INT8 com AVX-VNNI. As metas são as medidas aqui: <b>abaixo de ~40 ms em FP32</b>, onde o OpenVINO já usa ~70% do pico e sobra pouco espaço, e <b>perto de 14,9 ms em INT8</b>, onde está a alavanca maior. O valor principal desse engine é um artefato sem nenhuma dependência e o domínio do caminho todo, que é exatamente o que a Enty precisa.</p>
+<h2>12. Apêndice: versões e reprodução</h2><div class="table-wrap "><table><thead><tr><th>Componente</th><th>Versão</th></tr></thead><tbody><tr><td>PyTorch / Ultralytics</td><td>2.11.0+cu128 / 8.4.210</td></tr><tr><td>TensorRT / cuDNN (sistema)</td><td>11.4.0.106 / 9.28.1</td></tr><tr><td>ONNX / ONNX Runtime / onnxscript</td><td>1.23.2 / 1.31.1 / 0.7.2</td></tr><tr><td>OpenVINO / NNCF / pycocotools</td><td>2026.4.1 / 3.4.0 / 2.0.11</td></tr><tr><td>ncnn / pnnx</td><td>20261020 / 20261020</td></tr><tr><td>Driver NVIDIA / Mesa</td><td>620.70 / 26.2.6</td></tr><tr><td>CUDA</td><td>13.4 (sistema, TensorRT) e 12.8 (wheels, PyTorch e AOTInductor)</td></tr><tr><td>Compiladores</td><td>GCC 16.2.1, CMake 4.4, Ninja 1.13, Python 3.12</td></tr></tbody></table></div><p>O passo a passo completo para reproduzir cada rodada (pacotes, comandos, saídas esperadas e solução de problemas) está no <code>README.md</code> e em <code>docs/REPRODUCE.md</code>, em inglês. Os relatórios técnicos de cada rodada estão em <code>docs/aoti-results.md</code>, <code>docs/tensorrt-results.md</code>, <code>docs/cpu-results.md</code> e <code>docs/ncnn-vulkan-results.md</code>. Este relatório é gerado por <code>docs/report/build_report.py</code>.</p></body></html>
