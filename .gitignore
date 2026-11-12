@@ -8,3 +8,6 @@ artifacts/
 aoti/cpp/build/
 trt/cpp/build/
 ncnn/cpp/build/
+engine/build*/
+/artifacts
+/.venv

@@ -1,0 +1,127 @@
+#include "runtime.h"
+#include <limits>
+
+namespace engine {
+void conv_ref(const Tensor& x, const Tensor& w, const Tensor& b, Tensor& y, ConvParams p) {
+    const int ic = x.shape[1], ih = x.shape[2], iw = x.shape[3];
+    const int oc = y.shape[1], oh = y.shape[2], ow = y.shape[3];
+    const int cg = ic/p.group, og = oc/p.group;
+    for (int o = 0; o < oc; ++o)
+        for (int h = 0; h < oh; ++h)
+            for (int col = 0; col < ow; ++col) {
+                float sum = 0;
+                for (int c = 0; c < cg; ++c)
+                    for (int ky = 0; ky < p.kh; ++ky)
+                        for (int kx = 0; kx < p.kw; ++kx) {
+                            int sy = h*p.sy+ky-p.py, sx = col*p.sx+kx-p.px;
+                            if (sy >= 0 && sy < ih && sx >= 0 && sx < iw)
+                                sum += x.data[((o/og*cg+c)*ih+sy)*iw+sx] * w.data[((o*cg+c)*p.kh+ky)*p.kw+kx];
+                        }
+                sum += b.data[o];
+                y.data[(o*oh+h)*ow+col] = p.silu ? silu(sum) : sum;
+            }
+}
+void conv(Context&, const Tensor& x, const Tensor& w, const Tensor& b, Tensor& y, ConvParams p, const float*) {
+    conv_ref(x, w, b, y, p);
+}
+void unary(Context&, const Tensor& x, Tensor& y, int activation) {
+    for (size_t i = 0; i < x.size(); ++i) y.data[i] = activation ? silu(x.data[i]) : sigmoid(x.data[i]);
+}
+static std::vector<size_t> strides(const std::vector<int>& shape) {
+    std::vector<size_t> result(shape.size(), 1);
+    for (int i = static_cast<int>(shape.size())-2; i >= 0; --i) result[i] = result[i+1]*shape[i+1];
+    return result;
+}
+void binary(Context&, const Tensor& a, const Tensor& b, Tensor& y, int op) {
+    auto as = strides(a.shape), bs = strides(b.shape), ys = strides(y.shape);
+    size_t rank = y.shape.size(), da = rank-a.shape.size(), db = rank-b.shape.size();
+    for (size_t i = 0; i < y.size(); ++i) {
+        size_t ai = 0, bi = 0;
+        for (size_t d = 0; d < rank; ++d) {
+            size_t coord = i/ys[d] % y.shape[d];
+            if (d >= da && a.shape[d-da] != 1) ai += coord*as[d-da];
+            if (d >= db && b.shape[d-db] != 1) bi += coord*bs[d-db];
+        }
+        float l = a.data[ai], r = b.data[bi];
+        y.data[i] = op == 0 ? l+r : op == 1 ? l-r : op == 2 ? l*r : l/r;
+    }
+}
+void maxpool(Context&, const Tensor& x, Tensor& y) {
+    int c = x.shape[1], h = x.shape[2], w = x.shape[3];
+    for (int ch = 0; ch < c; ++ch)
+        for (int row = 0; row < h; ++row)
+            for (int col = 0; col < w; ++col) {
+                float v = -std::numeric_limits<float>::infinity();
+                for (int dy = -2; dy <= 2; ++dy)
+                    for (int dx = -2; dx <= 2; ++dx)
+                        if (row+dy >= 0 && row+dy < h && col+dx >= 0 && col+dx < w)
+                            v = std::max(v, x.data[(ch*h+row+dy)*w+col+dx]);
+                y.data[(ch*h+row)*w+col] = v;
+            }
+}
+void resize(Context&, const Tensor& x, Tensor& y) {
+    int h = x.shape[2], w = x.shape[3];
+    for (int c = 0; c < x.shape[1]; ++c)
+        for (int row = 0; row < h*2; ++row)
+            for (int col = 0; col < w*2; ++col)
+                y.data[(c*h*2+row)*w*2+col] = x.data[(c*h+row/2)*w+col/2];
+}
+void concat(Context&, std::initializer_list<const Tensor*> inputs, Tensor& y, int axis) {
+    size_t outer = 1, inner = 1;
+    for (int i = 0; i < axis; ++i) outer *= y.shape[i];
+    for (size_t i = axis+1; i < y.shape.size(); ++i) inner *= y.shape[i];
+    for (size_t o = 0; o < outer; ++o) {
+        size_t offset = o*y.shape[axis]*inner;
+        for (auto x : inputs) {
+            size_t n = x->shape[axis]*inner;
+            std::memcpy(y.data+offset, x->data+o*n, n*sizeof(float));
+            offset += n;
+        }
+    }
+}
+void split(Context&, const Tensor& x, std::initializer_list<Tensor*> outputs, int axis,
+           std::initializer_list<std::pair<int,int>> segments) {
+    size_t outer = 1, inner = 1;
+    for (int i = 0; i < axis; ++i) outer *= x.shape[i];
+    for (size_t i = axis+1; i < x.shape.size(); ++i) inner *= x.shape[i];
+    auto seg = segments.begin();
+    for (auto y : outputs) {
+        auto [start, n] = *seg++;
+        for (size_t o = 0; o < outer; ++o)
+            std::memcpy(y->data+o*n*inner, x.data+(o*x.shape[axis]+start)*inner, n*inner*sizeof(float));
+    }
+}
+void transpose(Context&, const Tensor& x, Tensor& y, std::initializer_list<int> permutation) {
+    auto xs = strides(x.shape), ys = strides(y.shape);
+    for (size_t i = 0; i < y.size(); ++i) {
+        size_t src = 0, d = 0;
+        for (int p : permutation) { src += (i/ys[d] % y.shape[d])*xs[p]; ++d; }
+        y.data[i] = x.data[src];
+    }
+}
+void matmul(Context&, const Tensor& a, const Tensor& b, Tensor& y) {
+    int m = a.shape[2], k = a.shape[3], n = b.shape[3];
+    int batches = a.shape[0]*a.shape[1];
+    for (int batch = 0; batch < batches; ++batch)
+        for (int i = 0; i < m; ++i)
+            for (int j = 0; j < n; ++j) {
+                float v = 0;
+                for (int z = 0; z < k; ++z) v += a.data[(batch*m+i)*k+z]*b.data[(batch*k+z)*n+j];
+                y.data[(batch*m+i)*n+j] = v;
+            }
+}
+void softmax(Context&, const Tensor& x, Tensor& y, int axis) {
+    size_t inner = 1, outer = 1;
+    for (int i = 0; i < axis; ++i) outer *= x.shape[i];
+    for (size_t i = axis+1; i < x.shape.size(); ++i) inner *= x.shape[i];
+    int n = x.shape[axis];
+    for (size_t o = 0; o < outer; ++o)
+        for (size_t i = 0; i < inner; ++i) {
+            size_t base = o*n*inner+i;
+            float maximum = -std::numeric_limits<float>::infinity(), sum = 0;
+            for (int c = 0; c < n; ++c) maximum = std::max(maximum, x.data[base+c*inner]);
+            for (int c = 0; c < n; ++c) { float e = std::exp(x.data[base+c*inner]-maximum); y.data[base+c*inner] = e; sum += e; }
+            for (int c = 0; c < n; ++c) y.data[base+c*inner] /= sum;
+        }
+}
+}
