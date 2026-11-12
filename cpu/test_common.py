@@ -47,5 +47,19 @@ class ValidationTests(unittest.TestCase):
         self.assertFalse(compare(actual, self.ref, int8=True)['ok'])
 
 
+class MapPreprocessingTests(unittest.TestCase):
+    def test_undo_letterbox_and_threshold(self):
+        from eval_map import original_boxes
+        output = np.zeros((1, 300, 6), dtype=np.float32)
+        output[0, 0] = [160, 0, 480, 640, .001, 0]
+        output[0, 1] = [160, 0, 480, 640, .0009, 0]
+        rows = original_boxes(output, 320, 640)
+        self.assertEqual(rows.shape, (1, 6))
+        np.testing.assert_array_equal(rows[0, :4], [0, 0, 320, 640])
+        output[0, 0, :4] = [0, 160, 640, 480]
+        rows = original_boxes(output, 640, 320)
+        np.testing.assert_array_equal(rows[0, :4], [0, 0, 640, 320])
+
+
 if __name__ == '__main__':
     unittest.main()
