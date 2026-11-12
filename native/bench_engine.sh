@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# PBI-097: three rotating rounds, initial attempt plus five contention retries.
+# PBI-098: four variants, three rotating rounds, up to five contention retries.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if (( $# != 0 )); then echo 'usage: [BENCH_SMOKE=1] [BENCH_CONTENDED=1] bash native/bench_engine.sh' >&2; exit 2; fi
-variants=(engine-6t engine-1t ov-cpu-fp32)
+variants=(engine-fp32-6t engine-int8-6t ov-cpu-fp32 ov-cpu-int8)
 rounds=3
 cooldown=60
-runs=artifacts/bench/engine-runs
-summary=artifacts/bench/engine-summary.txt
+runs=artifacts/engine/bench/engine-runs
+summary=artifacts/engine/bench/engine-summary.txt
 native_options=()
 if [[ ${BENCH_SMOKE:-0} == 1 ]]; then
   rounds=1
@@ -18,13 +18,13 @@ if [[ ${BENCH_SMOKE:-0} == 1 ]]; then
 fi
 mkdir -p "$runs"
 # Only this runner's files; never remove or overwrite another round's artifacts.
-rm -f "$summary" "$runs"/round-{1,2,3}-{engine-6t,engine-1t,ov-cpu-fp32}.{txt,json}
+rm -f "$summary" "$runs"/round-{1,2,3}-{engine-fp32-6t,engine-int8-6t,ov-cpu-fp32,ov-cpu-int8}.{txt,json}
 {
   echo "session: engine | rounds=$rounds | cooldown=$cooldown s | smoke=${BENCH_SMOKE:-0}"
   for (( round=1; round<=rounds; ++round )); do
     shift=$(( round - 1 ))
-    for index in 0 1 2; do
-      variant=${variants[$(( (index + shift) % 3 ))]}
+    for index in 0 1 2 3; do
+      variant=${variants[$(( (index + shift) % 4 ))]}
       output="$runs/round-$round-$variant.txt"
       for attempt in 0 1 2 3 4 5; do
         echo "round: $round | variant: $variant | attempt: $((attempt + 1))/6 | cooldown: $cooldown s"
@@ -32,17 +32,18 @@ rm -f "$summary" "$runs"/round-{1,2,3}-{engine-6t,engine-1t,ov-cpu-fp32}.{txt,js
         status=0
         uv run python cpu/bench.py --check-host || status=$?
         if (( status == 0 )); then
-          if [[ "$variant" == ov-cpu-fp32 ]]; then
+          if [[ "$variant" == ov-cpu-* ]]; then
             # Keep cpu/bench.py's own monitor, precision, warmup and iterations
             # exactly as in native/bench_cpu.sh, also during smoke runs.
-            taskset -c 0,2,4,6,8,10 uv run python cpu/bench.py --variant ov-cpu-fp32 \
+            taskset -c 0,2,4,6,8,10 uv run python cpu/bench.py --variant "$variant" \
               --output-json "$runs/round-$round-$variant.json" | tee "$output.pending" || status=$?
             if (( status == 0 )); then mv "$output.pending" "$output"; else rm -f "$output.pending"; fi
           else
             threads=6
             cpus=0,2,4,6,8,10
-            if [[ "$variant" == engine-1t ]]; then threads=1; cpus=0; fi
-            command=(taskset -c "$cpus" engine/build/yolo_engine bench --threads "$threads" "${native_options[@]}")
+            precision=${variant#engine-}
+            precision=${precision%-6t}
+            command=(taskset -c "$cpus" engine/build/yolo_engine bench --precision "$precision" --threads "$threads" "${native_options[@]}")
             uv run python - "$output" "${command[@]}" <<'PY' || status=$?
 import subprocess
 import sys
@@ -115,8 +116,8 @@ for variant in sys.argv[5:]:
     rows = []
     for round in range(1, rounds+1):
         block = (runs / f'round-{round}-{variant}.txt').read_text()
-        expected = ('variant: ov-cpu-fp32\n' if variant == 'ov-cpu-fp32' else
-                    f'variant: engine fp32 impl=opt threads={6 if variant == "engine-6t" else 1} cpus={"0,2,4,6,8,10" if variant == "engine-6t" else "0"}\n')
+        expected = (f'variant: {variant}\n' if variant.startswith('ov-cpu-') else
+                    f'variant: engine {variant.split("-")[1]} impl=opt threads=6 cpus=0,2,4,6,8,10\n')
         if expected not in block:
             raise ValueError(f'wrong variant: {variant}, round {round}')
         latency = re.search(r'latency ms: mean ([\d.]+) \| p50 ([\d.]+) \| p95 ([\d.]+)', block)
