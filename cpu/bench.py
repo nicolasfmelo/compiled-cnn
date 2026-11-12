@@ -13,24 +13,34 @@ from common import ARTIFACTS, PCORES, VARIANTS, load_runtime, read_binary
 
 
 class FrequencySampler:
-    """Sample six P-core cpufreq readings at 10 Hz during measured iterations."""
+    """Sample six P-cores at 10 Hz, retaining the prescribed even-CPU readings.
+
+    scaling_cur_freq can be stale on an idle SMT sibling. The unpinned OV
+    default uses odd siblings here, so use max(even, odd) per physical core
+    for the peak estimate, and report the even-only mean separately.
+    """
     def __init__(self):
         self.values = []
+        self.primary_values = []
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self.sample, daemon=True)
 
     def sample(self):
         while not self.stop.is_set():
-            values = []
+            values, primary = [], []
             for cpu in sorted(PCORES):
-                path = Path(f'/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_cur_freq')
-                try:
-                    values.append(int(path.read_text()) / 1e6)
-                except OSError:
-                    # /proc MHz fallback if cpufreq is unavailable.
-                    sections = Path('/proc/cpuinfo').read_text().split('\n\n')
-                    fields = dict(line.split(':', 1) for line in sections[cpu].splitlines() if ':' in line)
-                    values.append(float(next(v for k, v in fields.items() if k.strip() == 'cpu MHz')) / 1000)
+                siblings = []
+                for logical in (cpu, cpu + 1):
+                    path = Path(f'/sys/devices/system/cpu/cpu{logical}/cpufreq/scaling_cur_freq')
+                    try:
+                        siblings.append(int(path.read_text()) / 1e6)
+                    except OSError:
+                        sections = Path('/proc/cpuinfo').read_text().split('\n\n')
+                        fields = dict(line.split(':', 1) for line in sections[logical].splitlines() if ':' in line)
+                        siblings.append(float(next(v for k, v in fields.items() if k.strip() == 'cpu MHz')) / 1000)
+                primary.append(siblings[0])
+                values.append(max(siblings))
+            self.primary_values.append(float(np.mean(primary)))
             self.values.append(float(np.mean(values)))
             self.stop.wait(.1)
 
@@ -161,12 +171,14 @@ def main():
     print(f'peak RSS MiB: {rss:.1f}')
     print(f'load ms: {load_ms:.2f} | first run ms: {first_ms:.2f}')
     print(f'model MiB: {size / 2**20:.3f}')
-    print(f'frequency: P-core mean {frequency:.3f} GHz | samples {len(sampler.values)}')
+    primary_frequency = float(np.mean(sampler.primary_values))
+    print(f'frequency: P-core mean {frequency:.3f} GHz (max per SMT pair) | even CPUs mean {primary_frequency:.3f} GHz | samples {len(sampler.values)}')
     print(f'compute: model {gflops:.3f} GFLOPs | achieved {achieved:.2f} GFLOPS | peak FP32 {peak:.2f} GFLOPS | {achieved / peak * 100:.2f}% of peak')
     result = dict(variant=args.variant, settings=settings, times_ms=times, mean_ms=mean,
                   p50_ms=float(np.percentile(times, 50)), p95_ms=float(np.percentile(times, 95)),
                   throughput=1000/mean, rss_mib=rss, load_ms=load_ms, first_ms=first_ms,
-                  model_mib=size/2**20, frequency_ghz=frequency, frequency_samples=len(sampler.values),
+                  model_mib=size/2**20, frequency_ghz=frequency, even_cpu_frequency_ghz=primary_frequency,
+                  frequency_samples=len(sampler.values),
                   model_gflops=gflops, achieved_gflops=achieved, peak_fp32_gflops=peak, percent_peak=achieved/peak*100)
     (ARTIFACTS / f'cpu/bench-{args.variant}.json').write_text(json.dumps(result, indent=2) + '\n')
 
