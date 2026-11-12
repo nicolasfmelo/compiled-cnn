@@ -302,4 +302,4 @@ Keep activations in u8 between consecutive INT8 convolutions, by quantizing in t
 
 ## Licenses
 
-The YOLOv10s weights and the Ultralytics package are AGPL-3.0. `stb_image.h` (in `native/third_party/`) is public domain / MIT. TensorRT, CUDA and cuDNN are under NVIDIA's licenses.
+This repository is licensed under the [GNU AGPL-3.0](LICENSE), matching its main dependency: the YOLOv10s weights and the Ultralytics package are AGPL-3.0. `stb_image.h` (in `native/third_party/`) is public domain / MIT. TensorRT, CUDA and cuDNN are under NVIDIA's licenses.
