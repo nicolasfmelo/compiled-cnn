@@ -7,12 +7,15 @@ produz `[1,8400,84]`, caixas xyxy decodificadas e 80 scores sigmoid da cabeça
 one-to-one. O pós-processamento C++ existente foi **movido, sem alteração**,
 de `ncnn/cpp/postprocess.h` para `native/postprocess.h`; não há NMS.
 
-**Resultado:** M1–M4 implementados e commitados separadamente. Referência em
-uma thread e otimizado em uma/seis threads passam **8/8 FP32 estrito**, sem
-alterar referências ou tolerâncias. `detect --check` passa. O engine não usa
-runtime de inferência, BLAS, OpenMP, TBB ou nova dependência. A medição rápida
-final foi **79,29 ms / 273,71 GFLOPS em seis P-cores**, ainda atrás das
-bibliotecas de referência. **Não é um benchmark final com controle térmico.**
+**Resultado:** M1–M5 implementados, além das quatro correções do gerador
+identificadas na revisão independente. Referência em uma thread e otimizado
+em uma/seis threads passam **8/8 FP32 estrito**, sem alterar referências ou
+tolerâncias. `detect --check` passa. Nenhuma biblioteca de inferência, BLAS,
+OpenMP/TBB ou nova dependência foi adicionada. M5 chegou a **45,60 ms em uma
+etapa exploratória de 100 medidas**, mas a execução final de 200 medidas,
+com o host ruidoso, deu **60,07 ms / 361,28 GFLOPS**. Uma thread final deu
+**240,15 ms**. **A meta <45 ms não foi demonstrada; não se superou OV 40,20 ms.
+Nenhum desses valores substitui o benchmark térmico final pendente.**
 
 ## Construção e decisões
 
@@ -27,7 +30,8 @@ bibliotecas de referência. **Não é um benchmark final com controle térmico.*
   rejeita operadores, atributos e combinações não suportados. Não presume
   semântica de Resize: o grafo efetivamente contém
   `nearest/asymmetric/floor`, escalas `[1,1,2,2]`. MaxPool é 5×5, stride 1,
-  padding 2 com −∞; Conv respeita grupos, strides e pads. Há também depthwise
+  padding 2 com −∞; Conv respeita grupos e strides, aceita padding simétrico
+  e rejeita padding assimétrico explicitamente. Há também depthwise
   **7×7**, além das 3×3 citadas na estimativa inicial.
 - Gera `model.cpp/model.h`, uma chamada por operação fundida, `plan.txt`
   com formas, MACs, aliases, intervalos de vida e offsets da arena, mais
@@ -37,16 +41,33 @@ bibliotecas de referência. **Não é um benchmark final com controle térmico.*
   ONNX. Isso permite slices contíguos e acesso vetorial à dimensão espacial,
   sem conversão global para NHWC/NCHWc. As transposições necessárias do PSA e
   do head são executadas e entram no tempo. Não se mediu layout blocado.
-- Conv 1×1 usa GEMM diretamente sobre a entrada; Conv 3×3 usa **im2col em
-  tiles + GEMM**, sem materializar o im2col da imagem inteira. Microkernel
-  **4 canais × 16 posições**, oito acumuladores AVX2/FMA, pesos
-  `[ceil(OC/4),K,4]`, caudas escalares. `NB=64`, `KB=128`: painel quente B de
-  32 KiB + pesos/saída cabem na L1d de 48 KiB. O maior painel completo é
-  `4608×64×4 = 1,125 MiB`, abaixo dos 1,25 MiB de L2 por P-core; é uma margem
-  pequena para outras estruturas, não uma promessa de ausência de misses.
-- Depthwise 3×3/7×7 tem kernel AVX2 próprio, bordas escalares e gather no
-  stride 2. MaxPool, Resize e MatMul de atenção têm caminhos AVX2; Softmax
-  vetoriza exp e, no DFL, oito reduções espaciais independentes.
+- **M5:** Conv 1×1 e 3×3 empacotam ativações diretamente em micro-painéis
+  `[micro,K,16]`; não há im2col da imagem inteira. Kernel **6×16**, doze
+  acumuladores AVX2/FMA, pesos `[ceil(OC/6),K,6]` com linhas finais zeradas,
+  caudas de coluna com maskload/maskstore. C permanece nos registradores
+  durante **todo K**; não se lê/escreve C a cada bloco de 128. Tiles completos
+  usam loads/stores sem máscara. No pack de 1×1, deixa-se de saltar `H×W`
+  floats entre cada acesso do GEMM. O caminho de cópia direta exige também
+  `ih==oh && iw==ow`.
+- Im2col usa segmentos de linha pré-calculados, cópias AVX2 contíguas em
+  stride 1 e dois loads + shuffle/permute em stride 2. Divisão/módulo e
+  limites são calculados antes do laço de canais. Só bordas ficam escalares;
+  painéis completos não são zerados para depois serem sobrescritos.
+- Grid **tile espacial × chunk de canais**, escolhido offline por forma:
+  configuração final `NB=16`, chunks múltiplos de seis e equilibrados após
+  aplicar o limite de cache. Busca pelo menos 24 jobs e painel B + fatia de
+  pesos ≤1 MiB, deixando margem na L2 de 1,25 MiB. O maior B tem 288 KiB;
+  não depende de toda a matriz de pesos permanecer na L1 de 48 KiB. Cada job
+  empacota B uma vez; chunks distintos ainda repetem esse pack. A maior
+  matriz densa deste grafo tem cerca de 1,5 MiB, não 9 MiB.
+- Depthwise 3×3/7×7 usa halo zerado privado para vetorizar também as bordas
+  de mapas pequenos. Stride 2 usa deinterleave, sem gather. Se há poucos
+  canais, divide também por blocos de 16 linhas. MaxPool/Resize continuam
+  AVX2; MatMul PSA usa bloco 4×16 sem alocar views por linha. Softmax vetoriza
+  exp e, no DFL, oito reduções espaciais independentes.
+- Broadcast binário coalesce a dimensão final e decodifica índices uma vez
+  por sequência, não por float. Transposições PSA/head usam tiles 32×32 com
+  micro-transposição AVX2 8×8 e caudas exatas; DFL troca blocos contíguos.
 - Bias, SiLU e Add residual elegível ficam no epílogo. Apenas reduções
   semanticamente seguras são fundidas: uso único, mesmas formas e sem
   eliminar outros consumidores. Quinze Concat viram views, inclusive com
@@ -78,7 +99,13 @@ O teste de **1.000.001 amostras em [−88,88]**, comparado com `std::exp(double)
 mediu erro relativo máximo **1,71849×10⁻⁷**, abaixo de 2×10⁻⁷. Escala dividida
 preserva subnormais. Sigmoid usa exp de argumento não positivo, evitando
 exp(+100); testes cobrem SiLU de −100 e −1000, incluindo zero negativo e
-ausência de NaN. O caminho referência continua usando `std::exp`.
+ausência de NaN. Em M5, SiLU usa `x/(1+exp(-x))` somente quando todas as
+lanes estão em [−80,80], com o mesmo polinômio e escalas normais; fora dessa
+faixa volta ao caminho estável com subnormais. O teste denso de 200.001
+pontos em [−100,100] mediu erro relativo máximo **1,43031×10⁻⁷** onde a
+magnitude é >10⁻³⁰ e também confere erro absoluto/relativo contra a referência
+em toda a faixa. Não houve troca do exp de Softmax nem `-ffast-math` global.
+O caminho referência continua usando `std::exp`.
 
 ## Marcos: medidas rápidas, sem proteção térmica
 
@@ -100,9 +127,14 @@ comparada ao pico total de seis núcleos, para manter a mesma base da tabela.
 | M3 — fusões, views, arena | opt/1 | 2 + 10 | 347,54 | 343,59 | 364,22 | 62,45 | 7,81% | 8/8 |
 | M4 — pool, final | opt/6 | 20 + 200 | **79,29** | 76,31 | 101,63 | **273,71** | **34,21%** | **8/8** |
 | M4 — controle de uma thread | opt/1 | 20 + 200 | 348,13 | 347,31 | 352,82 | 62,34 | 7,79% | 8/8 |
+| **M5 — verificação final, host ruidoso** | **opt/6** | **20 + 200** | **60,07** | **56,74** | **87,80** | **361,28** | **45,16%** | **8/8** |
+| M5 — uma thread, comando solicitado | opt/1 | 20 + 50 | 240,15 | 238,91 | 248,97 | 90,37 | 11,30% | 8/8 |
+| M5 — uma thread, comando original | opt/1 | 20 + 200 | 245,78 | 241,28 | 271,93 | 88,30 | 11,04% | 8/8 |
 
-M2, M3 e M4/6 incluem instrumentação `--profile`; M4/1 não. As medições
-não tiveram cooldown nem monitor de concorrência. Houve atividade externa
+M2, M3, M4/6 e M5/6 incluem `--profile`; as medições de uma thread de
+M4/M5 não. M1–M4 não tiveram cooldown nem monitor de concorrência. Na
+verificação M5/6 houve uma espera de 60 s, mas sem monitor durante a medida;
+isso **não tornou a execução livre de concorrência**. Houve atividade externa
 no host, confirmada posteriormente pelos descartes do smoke. Não misturar
 esses números com medianas térmicas nem atribuir causalidade isolada a cada
 mudança de uma etapa que inclui várias otimizações. M4 mantém essencialmente
@@ -110,10 +142,11 @@ a latência de uma thread de M3 e dá **4,39×** de aceleração com seis thread
 na sequência final, não 6× ideal.
 
 Logs fora do Git, preservados em `artifacts/engine/`:
-`m1-bench.txt`, `m2-bench.txt`, `m3-bench.txt`, `final-bench-{1t,6t}.txt`.
-Os commits dos marcos preservam seus kernels históricos; `--stage 1..4`
+`m1-bench.txt`, `m2-bench.txt`, `m3-bench.txt`, `final-bench-{1t,6t}.txt`,
+`m5-*.txt`; em particular `m5-final-bench-{6t,1t,1t-200}.txt`.
+Os commits dos marcos preservam seus kernels históricos; `--stage 1..5`
 seleciona as reescritas do gerador, **não restaura versões históricas dos
-kernels**. A configuração padrão do gerador é M4.
+kernels**. A configuração padrão é M5; os pesos atuais são sempre 6×16.
 
 ### Perfil M4, seis threads
 
@@ -140,8 +173,10 @@ Carga M4/6: **2,62 ms**; primeira execução: **71,20 ms**; pico RSS:
 **105,8 MiB**. M4/1: carga 1,03 ms, primeira 414,66 ms, RSS 101,0 MiB.
 Carga mede arena, descritores e pool; pesos já estão no executável, sem
 custo de leitura/repacking atribuído artificialmente ao forward. O blob de
-pesos ocupa **58.087.488 bytes / 55,40 MiB**: inclui original para `--impl ref`
-e cópia pré-empacotada para o otimizado. Não é compressão do checkpoint.
+pesos de M4 ocupava **58.087.488 bytes / 55,40 MiB**. Em M5 são
+**58.570.624 bytes / 55,86 MiB**, por padding das linhas em múltiplos de seis.
+Inclui original para `--impl ref` e cópia pré-empacotada para o otimizado.
+Não é compressão do checkpoint.
 
 ### O que ajudou, o que não ajudou e o que não foi medido
 
@@ -171,9 +206,108 @@ e cópia pré-empacotada para o otimizado. Não é compressão do checkpoint.
   NB=32 pode ser melhor para seis threads, mas a diferença entre 32 e 64
   não foi estabelecida sob controle térmico; **não há alegação de autotuning
   ótimo**. Os números históricos de M4 usam NB=64, restaurado ao final.
-- NCHWc/NHWC, kernel direto AVX2 alternativo e outras formas de microkernel
-  não foram comparados. Não se atribui ganho a opções não implementadas.
-  Winograd/FFT, FP16 e INT8 ficaram fora do escopo.
+- NCHWc/NHWC e kernel direto AVX2 alternativo não foram comparados. Em M5
+  foram comparados 4×16 e 6×16, conforme a seção seguinte. Não se atribui
+  ganho a opções não implementadas. Winograd/FFT, FP16 e INT8 ficaram fora
+  do escopo.
+
+## Revisão do gerador — quatro correções antes de M5
+
+A revisão independente identificou erros que não eram exercitados por este
+grafo específico. Foram corrigidos em um commit separado e verificados com
+grafos ONNX sintéticos, positivos e negativos:
+
+1. **Ordem do residual:** em `A=Conv(in); B=Conv(in); Add(A,B)`, A não pode
+   ler B antes de sua produção. A fusão exige produtor anterior à Conv;
+   constantes/entrada já estão disponíveis. O teste
+   `test_residual_future_producer_not_fused` impede a fusão em A e permite
+   em B; `test_residual_earlier_producer_and_constant_fused` cobre constante.
+2. **Padding assimétrico:** rejeitado com erro claro, pois o runtime recebe
+   somente pads iniciais. `test_asymmetric_padding_rejected` e
+   `test_symmetric_padding_accepted`. O pack rápido de 1×1 exige também
+   igualdade das duas dimensões espaciais entre entrada e saída.
+3. **Aliases da entrada:** Reshape/Slice/Split contíguos enraizados em
+   `images` são rejeitados, em vez de deixar descritores nullptr sem rebind.
+   `test_input_rooted_aliases_rejected` cobre as três operações;
+   `test_arena_rooted_alias_accepted` mantém as views válidas da arena.
+4. **Consumidores observáveis:** uso contado pela raiz dos aliases e também
+   pela saída do grafo, não só pelas arestas presentes em `ops`. Conv→SiLU
+   só funde uma ativação direta que seja o consumidor exclusivo. Testes
+   `test_silu_alias_consumers_preserved` (Reshape/Slice/Split),
+   `test_silu_graph_output_preserved` e `test_silu_sole_consumer_fused`.
+
+Após essa parte, os três modos passaram 8/8, detect passou, CTest 3/3 e duas
+regenerações tiveram hashes idênticos. M5 não alterou os loops de referência.
+
+## M5 — medições por mudança
+
+Todas as tentativas abaixo usaram `taskset -c 0,2,4,6,8,10`, **20 aquecimentos
++ 100 medidas e `--profile`**, exceto a linha final explicitamente 200.
+Não são medianas térmicas nem um A/B isolado: a atividade externa cresceu
+na segunda metade. `perf stat` foi tentado, mas **`perf: command not found`**
+(exit 127); não se instalou pacote nem se usou sudo. Diagnóstico por
+`--profile` e inspeção de assembly (`packed-assembly.txt`): os doze
+acumuladores ficam nos registradores no laço K; os spills observados ficam
+no epílogo, não a cada FMA.
+
+| Mudança cumulativa / tentativa | Média 6t ms | p95 ms | Resultado / ressalva |
+|---|---:|---:|---|
+| Baseline após Parte A | 77,47 | 88,81 | Mesmo desempenho de M4 |
+| Painéis `[micro,K,16]`, pack vetorial, K inteiro, kernel 4×16 | 71,21 | 74,74 | Conv3×3 caiu 34,59→25,85 ms; só empacotar 1×1 não bastou: 20,69→23,58 ms |
+| Kernel 6×16 e linhas zeradas | 64,45 | 66,46 | Mantido; 1t 312,22→290,14 ms em 100 medidas |
+| Grid 2-D por camada, tiles 64/32 | 60,80 | 67,73 | Mantido; conv1×1 20,68→18,82 ms |
+| Broadcast por sequência + transposição blocada | 53,68 | 54,77 | Mantido; head 4,34→0,57 ms; concat/copy 2,52→0,14 ms |
+| Halo depthwise + deinterleave | 53,98 | 60,21 | Kernel 4,34→2,25 ms; total contaminado por Conv mais lentas |
+| Repetição do halo | 55,64 | 66,25 | Depthwise 2,39 ms; não esconder a repetição pior |
+| Bounds/segmentos antes dos canais; sem zerar painel completo | 49,10 | 50,18 | Mantido; elimina divisões repetidas por canal |
+| Loads/stores completos sem máscara | 48,95 | 50,37 | Ganho pequeno, não isolável do ruído |
+| SiLU em faixa normal com fallback | 47,62 | 49,04 | Mantido, testado numericamente |
+| NB=32 | 45,86 | 47,09 | Melhor que 64 nesta sequência |
+| **NB=16 + chunks equilibrados** | **45,60** | **46,60** | Configuração mantida; ainda não <45 ms |
+| NB=128, chunks equilibrados, NB=16 para K grande | 48,72 | 50,05 | **Descartado**, voltou para 16 |
+| MatMul PSA 4×16 sem views por linha | 54,29 | 66,67 | Attention 1,26→0,62 ms; demais kernels ficaram mais lentos com o host ruidoso |
+| Polinômio SiLU por Estrin | 51,64 | 60,29 | **Descartado**, ganho não demonstrado separadamente do ruído; voltou a Horner |
+| Unroll K×4 explícito | 54,95 | 60,10 | **Descartado**, nenhum ganho demonstrado; voltou ao laço simples |
+| **M5 final, 200 medidas, espera de 60 s, sem monitor** | **60,07** | **87,80** | Mantido como resultado final real, não substituído pelo melhor exploratório |
+
+Os logs `m5-baseline.txt`, `m5-packed{4,6}.txt`, `m5-grid.txt`,
+`m5-head.txt`, `m5-depthwise*.txt`, `m5-hoisted-pack.txt`, `m5-full-tile.txt`,
+`m5-silu-normal.txt`, `m5-tile*.txt`, `m5-attention.txt`, `m5-estrin.txt`,
+`m5-unroll4.txt` e `m5-final-*.txt` ficam em `artifacts/engine/`.
+
+A comparação M5 1t final de **240,15 ms** contra M4 **348,13 ms** é redução
+observada de 31,0%, mas também não foi uma sessão térmica comum. O resultado
+6t final não permite concluir que a meta foi atingida: **60,07 ms** ficou
+acima de 45 ms e dos runtimes históricos. Nem a melhor etapa de 100 medidas
+(45,60 ms) passou o alvo. O smoke posterior confirmou carga externa suficiente
+para esgotar seis tentativas de OV. Não é correto atribuir toda a diferença
+a uma alteração de kernel nem garantir o resultado em host ocioso.
+
+### Perfil M5 final, seis threads
+
+Mesmas **200** chamadas da verificação final: **modelo 59,34 ms**, pós 0,73 ms,
+total 60,07 ms. Percentuais do modelo; não da soma modelo+pós. Carga 2,85 ms,
+primeira execução 57,65 ms, RSS máximo 107,6 MiB.
+
+| Tipo | Média ms | % do modelo |
+|---|---:|---:|
+| conv3x3 | 24,89 | 41,94% |
+| conv3x3s2 | 7,16 | 12,07% |
+| conv1x1 | 22,35 | 37,66% |
+| dwconv | 2,70 | 4,55% |
+| maxpool | 0,20 | 0,34% |
+| resize | 0,26 | 0,44% |
+| attention | 0,72 | 1,21% |
+| concat/copy | 0,19 | 0,32% |
+| head | 0,80 | 1,35% |
+| other | 0,02 | 0,03% |
+
+Os slow paths removidos foram as transposições PSA (`Transpose`,
+`Transpose_1`), DFL (`dfl/Transpose`) e saída (`model.23/Transpose`), além de
+`model.23/Mul_2` com strides broadcast `[1,8400]`. O plano gerado mantém os
+nomes, formas e grids. A matemática de âncoras/strides não foi aproximada
+nem reassociada para reduzir operações. Convoluções densas agora são cerca
+de 92% do modelo; atenção e head deixaram de ser gargalos dominantes.
 
 ## Correção e testes
 
@@ -184,8 +318,8 @@ exportador antigo foi executado e nenhuma referência foi regenerada.
 | Execução final | PASS | Raw bus max abs diff vs fixture ncnn | Bus: caixa / score máximo |
 |---|---:|---:|---|
 | `--impl ref --threads 1` | 8/8 | 0,000579834 | 0,000031 px / 0,000001 |
-| `--impl opt --threads 1` | 8/8 | 0,000762939 | 0,000031 px / 0,000000 |
-| `--impl opt --threads 6` | 8/8 | 0,000762939 | 0,000031 px / 0,000000 |
+| `--impl opt --threads 1` | 8/8 | 0,000732422 | 0,000031 px / 0,000001 |
+| `--impl opt --threads 6` | 8/8 | 0,000732422 | 0,000031 px / 0,000001 |
 
 As tolerâncias continuam **caixas ≤ 0,5 px, scores ≤ 0,001, mesma contagem e
 classe, IoU ≥ 0,95**, via `validate(infer, false, REF_DIR)` de `native/common.h`.
@@ -200,13 +334,17 @@ não equivalem a uma avaliação COCO completa.
   `thread_pool`). Conv 1×1/3×3, grupos e depthwise 3×3/7×7, stride 1/2,
   padding, canais/larguras ímpares, caudas M/N/K, bias/SiLU/residual,
   MaxPool com entradas negativas, Resize, MatMul, Softmax, transposição,
-  broadcasting, exp e extremos de ativação. Testes repetidos em 1 e 6 threads.
+  broadcasting, exp e extremos de ativação. M5 acrescenta todas as caudas
+  até 19 colunas, OC não múltiplo de seis, K>4608, grid 2-D, halos e blocos
+  de linha com poucos canais, deinterleave nas bordas, transposições 8×8/
+  32×32 ímpares e broadcasts por linha/coluna nos dois sentidos. Testes
+  repetidos em 1 e 6 threads.
 - Build separado `-fsanitize=thread`: **3/3**, sem relatos de data race.
   Pool testado em 1/2/6 threads, afinidade, barreiras, exactly-once,
   sleep/wake, trabalho vazio e tarefa única.
-- `engine/tests/test_generator.py`: **4/4**, rejeita operador válido ONNX
-  não suportado, atributo não suportado, domínio customizado e modo de
-  coordenadas Resize não suportado, sem produzir pesos parciais.
+- `engine/tests/test_generator.py`: **13/13**, os quatro testes originais
+  de rejeição mais nove testes sintéticos positivos/negativos das correções
+  da Parte A, com subcasos para Reshape/Slice/Split e pads por eixo.
 - Duas gerações consecutivas: **SHA-256 idêntico dos cinco arquivos**.
 
 ## Comparação com as bibliotecas
@@ -220,14 +358,16 @@ reexecutadas como benchmark térmico nesta tarefa**:
 | ONNX Runtime FP32 | 43,63 | Mediana térmica da rodada CPU |
 | PyTorch eager FP32 | 55,56 | Mediana térmica da rodada CPU |
 | ncnn CPU FP32 | 56,89 | Mediana térmica da rodada ncnn |
-| **Engine próprio, M4/6** | **79,29** | **Uma execução rápida, sem controle térmico** |
+| Engine próprio, M4/6 histórico | 79,29 | Uma execução rápida, sem controle térmico |
+| **Engine próprio, M5/6 final** | **60,07** | **200 medidas, sem controle de concorrência** |
 
-A razão meramente descritiva das latências é 1,97× vs OV, 1,82× vs ORT,
-1,43× vs eager e 1,39× vs ncnn; **protocolos diferentes, não speedups
-controlados**. A conclusão segura é que remover bibliotecas/Python não
-bastou para superar kernels maduros. Conv densas ainda consomem cerca de
-83% do modelo; head/transposições, depthwise, cache e balanceamento de tiles
-limitam a eficiência, e o teto ideal de 800 GFLOPS não é todo atingível.
+Para M5 final, razões descritivas de 1,49× vs OV, 1,38× vs ORT, 1,08× vs
+eager e 1,06× vs ncnn; **protocolos diferentes, não speedups controlados**.
+A etapa exploratória de 45,60 ms não substitui o resultado final e também
+não bate OV/ORT. A conclusão segura continua sendo que remover bibliotecas/
+Python não basta para superar kernels maduros. Head/transposições e
+attention melhoraram bastante; Conv densas, cache, epílogos, packing repetido
+e balanceamento continuam limitando o desempenho.
 
 ## Benchmark final (controle térmico)
 
@@ -254,15 +394,19 @@ não mistura as 600 iterações. Saídas próprias:
 | engine-1t | PENDENTE | PENDENTE | PENDENTE | PENDENTE |
 | ov-cpu-fp32 | PENDENTE | PENDENTE | PENDENTE | PENDENTE |
 
-**Somente smoke executado:** `BENCH_SMOKE=1 bash native/bench_engine.sh`,
-exit 0, uma rodada, cooldown de 5 s, engine 1+5, OV ainda 20+200. Arquivos em
-`artifacts/bench/engine-runs/smoke/`, claramente rotulados, sem substituir o
-resumo final. Foram necessários **oito descartes por concorrência**:
-três no host check de engine-6t, um durante engine-1t e outro no seu host
-check, dois durante OV e um no seu host check. O script retentou com novo
-cooldown e preservou o log; não houve relaxamento dos limiares.
-Resultados aceitos de smoke: 72,50 / 348,67 / 43,48 ms, respectivamente.
-São teste de protocolo/parser, **não resultados térmicos**.
+**Smoke reexecutado após M5:** `BENCH_SMOKE=1 bash native/bench_engine.sh`,
+**exit 75 por concorrência externa**. Engine-6t foi aceito (47,59 ms, somente
+cinco medidas); engine-1t foi aceito após três descartes no host check
+(217,28 ms). OV foi descartado nas seis tentativas: cinco host checks e uma
+execução rejeitada pelo seu monitor. Total **nove descartes**; o script
+falhou sem publicar resumo bem-sucedido obsoleto. Não se alterou o monitor,
+nenhum processo externo foi parado e não se usa o smoke como benchmark.
+Arquivos parciais/log em `artifacts/bench/engine-runs/smoke/`.
+
+O smoke original de M4 havia terminado com exit 0 e parser validado nas
+três variantes, após oito descartes. A nova falha é uma limitação real do
+ambiente, não motivo para enfraquecer os limiares. É necessário repetir em
+sessão ociosa antes de preencher a tabela final.
 
 ## Reprodução
 
@@ -284,8 +428,9 @@ engine/build/yolo_engine validate artifacts/ref --impl ref --threads 1
 engine/build/yolo_engine validate artifacts/ref --impl opt --threads 1
 taskset -c 0,2,4,6,8,10 engine/build/yolo_engine validate artifacts/ref --impl opt --threads 6
 engine/build/yolo_engine detect artifacts/data/bus.jpg --check artifacts/ref/bus.eager_dets.txt
-taskset -c 0,2,4,6,8,10 engine/build/yolo_engine bench --threads 6 --profile
+taskset -c 0,2,4,6,8,10 engine/build/yolo_engine bench --threads 6 --iters 200 --profile
 taskset -c 0 engine/build/yolo_engine bench --threads 1
+taskset -c 0 engine/build/yolo_engine bench --threads 1 --iters 50
 ldd engine/build/yolo_engine
 uv run python engine/tests/test_generator.py
 cmake -S engine -B engine/build-tsan -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENGINE_TSAN=ON
@@ -305,7 +450,8 @@ afinidade padrão não foram validados. Os testes TSan cobrem kernels/pool,
 não um forward completo instrumentado de todas as oito imagens. A
 aproximação de exp tem teste denso, não prova formal para todos os floats.
 
-Próximos passos: concluir a sessão térmica, reavaliar NB=32 vs 64 com o
-mesmo protocolo, melhorar reutilização de pesos/cache e divisão de trabalho
-nas camadas pequenas antes de alterar layout. **INT8 com AVX-VNNI = PBI-098**,
+Próximos passos: concluir a sessão térmica em host ocioso; confirmar NB=16
+contra 32/64 sem concorrência; reduzir packing repetido entre chunks e
+melhorar os epílogos antes de alterar layout. A meta de 45 ms permanece
+aberta, não é marcada como concluída por uma execução exploratória. **INT8 com AVX-VNNI = PBI-098**,
 com calibração e validação próprias; não foi implementado neste cartão.
