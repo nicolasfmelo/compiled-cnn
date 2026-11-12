@@ -171,7 +171,40 @@ bash native/bench_ncnn.sh --with-intel   # adds the 4 Intel iGPU variants (each 
 
 Diagnostics flags of `yolo_ncnn`: `--storage-only` (FP16 storage, FP32 arithmetic), `--no-coop` (disable cooperative matrix), `--no-winograd`, `--no-sgemm`.
 
-## 8. Final report (PDF and HTML)
+## 8. Own CPU engine (PBI-097)
+
+A C++ engine written for this one graph: a Python generator reads the ONNX and emits a specialized forward pass (`model.cpp`) plus a weights blob embedded in the executable with `.incbin`. Kernels (AVX2/FMA GEMM 6×16, packed im2col, depthwise, attention), the arena planner and the pinned thread pool are in `engine/runtime/`. The binary links only libc, libstdc++, libm and libgcc_s. It needs only the compiler toolchain and the uv environment, no extra system packages.
+
+```bash
+uv run python engine/export_raw_onnx.py     # artifacts/engine/yolov10s_raw.onnx, output [1,8400,84] (before top-300)
+uv run python engine/gen/generate.py        # artifacts/engine/generated/{model.cpp,model.h,weights.bin,weights.S,plan.txt}
+cmake -S engine -B engine/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build engine/build
+ctest --test-dir engine/build --output-on-failure      # kernel and thread-pool unit tests
+uv run python engine/tests/test_generator.py           # generator tests (synthetic ONNX graphs)
+
+B=engine/build/yolo_engine
+$B validate artifacts/ref --impl ref --threads 1       # plain reference loops (~22 s per image)
+$B validate artifacts/ref --impl opt --threads 1
+taskset -c 0,2,4,6,8,10 $B validate artifacts/ref --impl opt --threads 6
+$B detect artifacts/data/bus.jpg --check artifacts/ref/bus.eager_dets.txt
+taskset -c 0,2,4,6,8,10 $B bench --threads 6 --profile   # time per layer kind
+ldd $B
+```
+
+Unlike the other export scripts, `engine/export_raw_onnx.py` and `engine/gen/generate.py` have a real CLI (`--help` is safe). The top-300 selection runs in C++ (`native/postprocess.h`, shared with the ncnn runner, bit-exact with the Python implementation). Expected: all three `validate` runs 8/8 PASS; `detect` PASS; two generator runs produce identical files.
+
+Benchmark (engine 6 threads, engine 1 thread and OpenVINO FP32 in the same session, 3 rotating rounds, ~15 min):
+
+```bash
+bash native/bench_engine.sh                     # idle host: runs with external load are discarded and retried
+BENCH_CONTENDED=1 bash native/bench_engine.sh   # busy host: records external load instead of discarding
+cat artifacts/bench/engine-summary.txt
+```
+
+The summary includes an "ideal" estimate (median p5 latency, i.e. the fastest 5% of iterations) and the margin of the mean over it, which matters when the host cannot be idled. Build processes still discard a run in both modes. `BENCH_SMOKE=1` does a one-round parse check.
+
+## 9. Final report (PDF and HTML)
 
 ```bash
 uv run --no-project --with weasyprint --with matplotlib python docs/report/build_report.py
@@ -187,7 +220,7 @@ Writes `docs/report/relatorio-pbi-095.html` (self-contained) and `docs/report/re
 | AUR `tensorrt` build fails with `[Errno 17] File exists: .../dist/bindings` | Race between Python wheel targets in a parallel build. Rebuild with one job: `cd ~/.cache/paru/clone/tensorrt && makepkg --config <copy of /etc/makepkg.conf with MAKEFLAGS="-j1"> -sefr`, then `sudo pacman -U tensorrt-*.pkg.tar.zst`. The `-e` flag reuses the C++ build already done. |
 | `nvidia-smi` or CUDA fails after a system update | Kernel module and driver libraries differ until reboot. Reboot. |
 | AOTInductor compilation picks headers from `/opt/cuda` | Use `aoti/export.py`, which builds a local `CUDA_HOME` from the wheels' CUDA 12.8 headers (needs `nvidia-cuda-cccl-cu12`, already in `pyproject.toml`). |
-| CPU or ncnn benchmark keeps discarding runs | Another process is using the CPU. Close the browser and stop builds/tests; check with `uptime` and `top`. |
+| CPU or ncnn benchmark keeps discarding runs | Another process is using the CPU. Close the browser and stop builds/tests; check with `uptime` and `top`. For the engine benchmark, `BENCH_CONTENDED=1` records the load instead. |
 | A benchmark result looks too slow | Laptop throttling. Use the provided scripts (cooldown + rotating rounds) instead of running variants back to back. |
 | Webcam stuck at 15 FPS | `v4l2-ctl -d /dev/video0 -c exposure_dynamic_framerate=0`. |
 | `yolo_ncnn` reports device not found | Check `vulkaninfo --summary`; install `vulkan-intel` for the iGPU and make sure the NVIDIA Vulkan ICD is present. |

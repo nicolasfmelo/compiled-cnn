@@ -55,21 +55,21 @@ nav ol { columns: 2; font-size: 14px; padding-left: 20px; }
 </style></head>
 <body>
 <h1>YOLOv10s compilada para runtimes nativos</h1>
-<div class="sub">PBI-095 · Relatório completo do experimento · 12 de novembro de 2026 · notebook com RTX 3050 6GB Laptop e i5-13450HX</div>
+<div class="sub">PBI-095 e PBI-097 · Relatório completo do experimento · 12 de novembro de 2026 · notebook com RTX 3050 6GB Laptop e i5-13450HX</div>
 
-<p>Este relatório reúne as quatro rodadas de um experimento sobre uma pergunta simples: <b>quanto se ganha ao compilar uma rede de detecção para um artefato nativo e executá-la a partir de C++</b>, em vez de rodar o PyTorch em Python, o que esse artefato ainda exige para funcionar e se o resultado numérico continua o mesmo. A rede é a YOLOv10s (Ultralytics). Foram testados AOTInductor e TensorRT na GPU NVIDIA, ONNX Runtime e OpenVINO (FP32 e INT8) na CPU, e ncnn via Vulkan na GPU NVIDIA, na GPU integrada Intel e na CPU. Todos os backends foram validados contra a mesma referência, com tolerâncias fixas, e medidos com o mesmo protocolo.</p>
+<p>Este relatório reúne as quatro rodadas de um experimento sobre uma pergunta simples: <b>quanto se ganha ao compilar uma rede de detecção para um artefato nativo e executá-la a partir de C++</b>, em vez de rodar o PyTorch em Python, o que esse artefato ainda exige para funcionar e se o resultado numérico continua o mesmo. A rede é a YOLOv10s (Ultralytics). Foram testados AOTInductor e TensorRT na GPU NVIDIA, ONNX Runtime e OpenVINO (FP32 e INT8) na CPU, e ncnn via Vulkan na GPU NVIDIA, na GPU integrada Intel e na CPU. Por fim, um <b>engine de inferência próprio em C++</b>, gerado a partir do ONNX e sem nenhuma biblioteca de inferência, foi comparado ao OpenVINO na CPU. Todos os backends foram validados contra a mesma referência, com tolerâncias fixas, e medidos com o mesmo protocolo.</p>
 
 <div class="kpis">
   <div class="kpi"><b>2,94 ms</b><span>TensorRT FP16 na RTX 3050: 340 FPS, 1,90× o PyTorch eager</span></div>
   <div class="kpi"><b>14,91 ms</b><span>OpenVINO INT8 na CPU: 67 FPS, 3,73× o eager, com −0,31 ponto de mAP</span></div>
-  <div class="kpi"><b>117 de 120</b><span>validações PASS; as 3 exceções têm causa conhecida (TF32 e FP16 na GPU integrada)</span></div>
-  <div class="kpi"><b>sem Python</b><span>três runners C++ (AOTInductor, TensorRT e ncnn) executam a rede sem interpretador</span></div>
+  <div class="kpi"><b>141 de 144</b><span>validações PASS; as 3 exceções têm causa conhecida (TF32 e FP16 na GPU integrada)</span></div>
+  <div class="kpi"><b>46,67 ms</b><span>engine próprio em C++ na CPU, sem bibliotecas: 1,07× o tempo do OpenVINO FP32 na mesma sessão</span></div>
 </div>
 
 <nav><ol>
 <li>Motivação</li><li>Hardware</li><li>Método comum</li><li>Ponto de partida: a webcam</li>
 <li>Rodada 1: AOTInductor</li><li>Rodada 2: TensorRT</li><li>Rodada 3: CPU</li><li>Rodada 4: ncnn e Vulkan</li>
-<li>Comparação geral</li><li>Problemas e lições</li><li>Conclusão</li><li>Apêndice: versões e reprodução</li>
+<li>Engine próprio em C++</li><li>Comparação geral</li><li>Problemas e lições</li><li>Conclusão</li><li>Apêndice: versões e reprodução</li>
 </ol></nav>
 
 <h2>1. Motivação</h2>
@@ -140,12 +140,12 @@ nav ol { columns: 2; font-size: 14px; padding-left: 20px; }
 <div class="table-wrap "><table><thead><tr><th>Variante (500 imagens do COCO val2017)</th><th class="num">mAP50-95</th><th class="num">mAP50</th></tr></thead><tbody><tr><td>PyTorch eager FP32</td><td class="num">49,33</td><td class="num">65,26</td></tr><tr><td>OpenVINO FP32</td><td class="num">49,33</td><td class="num">65,26</td></tr><tr><td>OpenVINO INT8</td><td class="num">49,02 (−0,31)</td><td class="num">65,31</td></tr></tbody></table></div>
 <h3>Controle térmico</h3>
 <p>A primeira tabela foi medida com as 5 variantes em sequência, e a frequência dos P-cores caiu de 4,21 para 3,09 GHz ao longo da fila. Rodando cada variante depois de um resfriamento, o INT8 foi de 19,35 ms (a 3,36 GHz) para 15,17 ms (a 4,19 GHz). O script final faz 60 s de resfriamento antes de cada medição, 3 rodadas com ordem trocada e usa a mediana; as 15 medições foram aceitas, com variação de no máximo 3%. A suposta lentidão do OpenVINO no modo padrão (27%) era só efeito de ter rodado por último.</p>
-<div class="table-wrap "><table><thead><tr><th>Variante</th><th class="num">Média</th><th class="num">p95</th><th class="num">FPS</th><th class="num">Ganho</th><th class="num">% do pico FP32</th><th class="num">RAM (MiB)</th><th>Modelo</th></tr></thead><tbody><tr><td>PyTorch eager FP32</td><td class="num">55,56 ms</td><td class="num">64,51</td><td class="num">18,0</td><td class="num">1,00×</td><td class="num">47%</td><td class="num">929</td><td>15,9 MiB</td></tr><tr><td>ncnn FP32 (rodada 4)</td><td class="num">56,89 ms</td><td class="num">60,57</td><td class="num">17,6</td><td class="num">0,98×</td><td class="num">—</td><td class="num">223</td><td>27,8 MiB</td></tr><tr><td>ONNX Runtime FP32</td><td class="num">43,63 ms</td><td class="num">49,96</td><td class="num">22,9</td><td class="num">1,27×</td><td class="num">63%</td><td class="num">219</td><td>28,4 MiB</td></tr><tr><td>OpenVINO FP32 (6 P-cores)</td><td class="num">40,20 ms</td><td class="num">45,73</td><td class="num">24,9</td><td class="num">1,38×</td><td class="num">70%</td><td class="num">215</td><td>28,0 MiB</td></tr><tr><td>OpenVINO FP32 padrão</td><td class="num">39,84 ms</td><td class="num">41,12</td><td class="num">25,1</td><td class="num">1,39×</td><td class="num">70%</td><td class="num">214</td><td>28,0 MiB</td></tr><tr><td><b>OpenVINO INT8</b></td><td class="num"><b>14,91 ms</b></td><td class="num">16,04</td><td class="num"><b>67,1</b></td><td class="num"><b>3,73×</b></td><td class="num">—</td><td class="num">172</td><td>7,7 MiB</td></tr></tbody></table></div><div class="figure"><svg xmlns:xlink="http://www.w3.org/1999/xlink" width="506.308906pt" height="187.904703pt" viewBox="0 0 506.308906 187.904703" xmlns="http://www.w3.org/2000/svg" version="1.1">
+<div class="table-wrap "><table><thead><tr><th>Variante</th><th class="num">Média</th><th class="num">p95</th><th class="num">FPS</th><th class="num">Ganho</th><th class="num">% do pico FP32</th><th class="num">RAM (MiB)</th><th>Modelo</th></tr></thead><tbody><tr><td>PyTorch eager FP32</td><td class="num">55,56 ms</td><td class="num">64,51</td><td class="num">18,0</td><td class="num">1,00×</td><td class="num">47%</td><td class="num">929</td><td>15,9 MiB</td></tr><tr><td>ncnn FP32 (rodada 4)</td><td class="num">56,89 ms</td><td class="num">60,57</td><td class="num">17,6</td><td class="num">0,98×</td><td class="num">—</td><td class="num">223</td><td>27,8 MiB</td></tr><tr><td>ONNX Runtime FP32</td><td class="num">43,63 ms</td><td class="num">49,96</td><td class="num">22,9</td><td class="num">1,27×</td><td class="num">63%</td><td class="num">219</td><td>28,4 MiB</td></tr><tr><td>OpenVINO FP32 (6 P-cores)</td><td class="num">40,20 ms</td><td class="num">45,73</td><td class="num">24,9</td><td class="num">1,38×</td><td class="num">70%</td><td class="num">215</td><td>28,0 MiB</td></tr><tr><td>OpenVINO FP32 padrão</td><td class="num">39,84 ms</td><td class="num">41,12</td><td class="num">25,1</td><td class="num">1,39×</td><td class="num">70%</td><td class="num">214</td><td>28,0 MiB</td></tr><tr><td><b>OpenVINO INT8</b></td><td class="num"><b>14,91 ms</b></td><td class="num">16,04</td><td class="num"><b>67,1</b></td><td class="num"><b>3,73×</b></td><td class="num">—</td><td class="num">172</td><td>7,7 MiB</td></tr></tbody></table></div><div class="figure"><svg xmlns:xlink="http://www.w3.org/1999/xlink" width="514.853281pt" height="204.536703pt" viewBox="0 0 514.853281 204.536703" xmlns="http://www.w3.org/2000/svg" version="1.1">
  <metadata>
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:date>2026-11-12T00:20:38.564379</dc:date>
+    <dc:date>2026-11-12T10:34:06.746374</dc:date>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -160,266 +160,283 @@ nav ol { columns: 2; font-size: 14px; padding-left: 20px; }
  </defs>
  <g id="figure_1">
   <g id="patch_1">
-   <path d="M 0 187.904703 
-L 506.308906 187.904703 
-L 506.308906 0 
+   <path d="M 0 204.536703 
+L 514.853281 204.536703 
+L 514.853281 0 
 L 0 0 
-L 0 187.904703 
+L 0 204.536703 
 z
 " style="fill: none"/>
   </g>
   <g id="axes_1">
    <g id="patch_2">
-    <path d="M 102.782656 151.344 
-L 493.382656 151.344 
-L 493.382656 7.2 
-L 102.782656 7.2 
-L 102.782656 151.344 
+    <path d="M 108.825312 167.976 
+L 499.425313 167.976 
+L 499.425313 7.2 
+L 108.825312 7.2 
+L 108.825312 167.976 
 z
 " style="fill: none"/>
    </g>
    <g id="matplotlib.axis_1">
     <g id="xtick_1">
      <g id="line2d_1">
-      <path d="M 102.782656 151.344 
-L 102.782656 7.2 
-" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+      <path d="M 108.825312 167.976 
+L 108.825312 7.2 
+" clip-path="url(#p6eefcd0ca3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_2">
       <defs>
-       <path id="md438647ecb" d="M 0 0 
+       <path id="mc5f50c5510" d="M 0 0 
 L 0 3.5 
 " style="stroke: #6f6f6c; stroke-width: 0.8"/>
       </defs>
       <g>
-       <use xlink:href="#md438647ecb" x="102.782656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#mc5f50c5510" x="108.825312" y="167.976" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_1">
-      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="102.782656" y="165.181891" transform="rotate(-0 102.782656 165.181891)">0</text>
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="108.825312" y="181.813891" transform="rotate(-0 108.825312 181.813891)">0</text>
      </g>
     </g>
     <g id="xtick_2">
      <g id="line2d_3">
-      <path d="M 151.607656 151.344 
-L 151.607656 7.2 
-" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+      <path d="M 157.650312 167.976 
+L 157.650312 7.2 
+" clip-path="url(#p6eefcd0ca3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_4">
       <g>
-       <use xlink:href="#md438647ecb" x="151.607656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#mc5f50c5510" x="157.650312" y="167.976" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_2">
-      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="151.607656" y="165.181891" transform="rotate(-0 151.607656 165.181891)">10</text>
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="157.650312" y="181.813891" transform="rotate(-0 157.650312 181.813891)">10</text>
      </g>
     </g>
     <g id="xtick_3">
      <g id="line2d_5">
-      <path d="M 200.432656 151.344 
-L 200.432656 7.2 
-" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+      <path d="M 206.475313 167.976 
+L 206.475313 7.2 
+" clip-path="url(#p6eefcd0ca3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_6">
       <g>
-       <use xlink:href="#md438647ecb" x="200.432656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#mc5f50c5510" x="206.475313" y="167.976" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_3">
-      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="200.432656" y="165.181891" transform="rotate(-0 200.432656 165.181891)">20</text>
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="206.475313" y="181.813891" transform="rotate(-0 206.475313 181.813891)">20</text>
      </g>
     </g>
     <g id="xtick_4">
      <g id="line2d_7">
-      <path d="M 249.257656 151.344 
-L 249.257656 7.2 
-" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+      <path d="M 255.300313 167.976 
+L 255.300313 7.2 
+" clip-path="url(#p6eefcd0ca3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_8">
       <g>
-       <use xlink:href="#md438647ecb" x="249.257656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#mc5f50c5510" x="255.300313" y="167.976" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_4">
-      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="249.257656" y="165.181891" transform="rotate(-0 249.257656 165.181891)">30</text>
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="255.300313" y="181.813891" transform="rotate(-0 255.300313 181.813891)">30</text>
      </g>
     </g>
     <g id="xtick_5">
      <g id="line2d_9">
-      <path d="M 298.082656 151.344 
-L 298.082656 7.2 
-" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+      <path d="M 304.125313 167.976 
+L 304.125313 7.2 
+" clip-path="url(#p6eefcd0ca3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_10">
       <g>
-       <use xlink:href="#md438647ecb" x="298.082656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#mc5f50c5510" x="304.125313" y="167.976" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_5">
-      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="298.082656" y="165.181891" transform="rotate(-0 298.082656 165.181891)">40</text>
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="304.125313" y="181.813891" transform="rotate(-0 304.125313 181.813891)">40</text>
      </g>
     </g>
     <g id="xtick_6">
      <g id="line2d_11">
-      <path d="M 346.907656 151.344 
-L 346.907656 7.2 
-" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+      <path d="M 352.950312 167.976 
+L 352.950312 7.2 
+" clip-path="url(#p6eefcd0ca3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_12">
       <g>
-       <use xlink:href="#md438647ecb" x="346.907656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#mc5f50c5510" x="352.950312" y="167.976" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_6">
-      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="346.907656" y="165.181891" transform="rotate(-0 346.907656 165.181891)">50</text>
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="352.950312" y="181.813891" transform="rotate(-0 352.950312 181.813891)">50</text>
      </g>
     </g>
     <g id="xtick_7">
      <g id="line2d_13">
-      <path d="M 395.732656 151.344 
-L 395.732656 7.2 
-" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+      <path d="M 401.775313 167.976 
+L 401.775313 7.2 
+" clip-path="url(#p6eefcd0ca3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_14">
       <g>
-       <use xlink:href="#md438647ecb" x="395.732656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#mc5f50c5510" x="401.775313" y="167.976" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_7">
-      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="395.732656" y="165.181891" transform="rotate(-0 395.732656 165.181891)">60</text>
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="401.775313" y="181.813891" transform="rotate(-0 401.775313 181.813891)">60</text>
      </g>
     </g>
     <g id="xtick_8">
      <g id="line2d_15">
-      <path d="M 444.557656 151.344 
-L 444.557656 7.2 
-" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+      <path d="M 450.600313 167.976 
+L 450.600313 7.2 
+" clip-path="url(#p6eefcd0ca3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_16">
       <g>
-       <use xlink:href="#md438647ecb" x="444.557656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#mc5f50c5510" x="450.600313" y="167.976" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_8">
-      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="444.557656" y="165.181891" transform="rotate(-0 444.557656 165.181891)">70</text>
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="450.600313" y="181.813891" transform="rotate(-0 450.600313 181.813891)">70</text>
      </g>
     </g>
     <g id="xtick_9">
      <g id="line2d_17">
-      <path d="M 493.382656 151.344 
-L 493.382656 7.2 
-" clip-path="url(#pbb883c71be)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+      <path d="M 499.425313 167.976 
+L 499.425313 7.2 
+" clip-path="url(#p6eefcd0ca3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_18">
       <g>
-       <use xlink:href="#md438647ecb" x="493.382656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#mc5f50c5510" x="499.425313" y="167.976" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_9">
-      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="493.382656" y="165.181891" transform="rotate(-0 493.382656 165.181891)">80</text>
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="499.425313" y="181.813891" transform="rotate(-0 499.425313 181.813891)">80</text>
      </g>
     </g>
     <g id="text_10">
-     <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #4a4a48" x="298.082656" y="178.542594" transform="rotate(-0 298.082656 178.542594)">Inferências por segundo (i5-13450HX, 6 threads nos P-cores; medianas)</text>
+     <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #4a4a48" x="304.125313" y="195.174594" transform="rotate(-0 304.125313 195.174594)">Inferências por segundo (i5-13450HX, 6 threads nos P-cores; medianas; * host com carga)</text>
     </g>
    </g>
    <g id="matplotlib.axis_2">
     <g id="ytick_1">
      <g id="line2d_19"/>
      <g id="text_11">
-      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="99.282656" y="25.717384" transform="rotate(-0 99.282656 25.717384)">PyTorch eager FP32</text>
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="105.325312" y="25.757297" transform="rotate(-0 105.325312 25.757297)">PyTorch eager FP32</text>
      </g>
     </g>
     <g id="ytick_2">
      <g id="line2d_20"/>
      <g id="text_12">
-      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="99.282656" y="54.203989" transform="rotate(-0 99.282656 54.203989)">ncnn FP32</text>
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="105.325312" y="51.856945" transform="rotate(-0 105.325312 51.856945)">ncnn FP32</text>
      </g>
     </g>
     <g id="ytick_3">
      <g id="line2d_21"/>
      <g id="text_13">
-      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="99.282656" y="82.691297" transform="rotate(-0 99.282656 82.691297)">ONNX Runtime FP32</text>
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="105.325312" y="77.957297" transform="rotate(-0 105.325312 77.957297)">ONNX Runtime FP32</text>
      </g>
     </g>
     <g id="ytick_4">
      <g id="line2d_22"/>
      <g id="text_14">
-      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="99.282656" y="111.177902" transform="rotate(-0 99.282656 111.177902)">OpenVINO FP32</text>
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="105.325312" y="104.056945" transform="rotate(-0 105.325312 104.056945)">OpenVINO FP32</text>
      </g>
     </g>
     <g id="ytick_5">
      <g id="line2d_23"/>
      <g id="text_15">
-      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="99.282656" y="139.664858" transform="rotate(-0 99.282656 139.664858)">OpenVINO INT8</text>
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="105.325312" y="130.337297" transform="rotate(-0 105.325312 130.337297)">Engine próprio FP32 *</text>
+     </g>
+    </g>
+    <g id="ytick_6">
+     <g id="line2d_24"/>
+     <g id="text_16">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="105.325312" y="156.256945" transform="rotate(-0 105.325312 156.256945)">OpenVINO INT8</text>
      </g>
     </g>
    </g>
    <g id="patch_3">
-    <path d="M 102.782656 151.344 
-L 493.382656 151.344 
+    <path d="M 108.825312 167.976 
+L 499.425313 167.976 
 " style="fill: none; stroke: #e4e4e1; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
    </g>
    <g id="patch_4">
-    <path d="M 102.782656 13.752 
-L 190.667656 13.752 
-L 190.667656 30.844174 
-L 102.782656 30.844174 
+    <path d="M 108.825312 14.508 
+L 196.710312 14.508 
+L 196.710312 30.168 
+L 108.825312 30.168 
 z
-" clip-path="url(#pbb883c71be)" style="fill: #2a78d6"/>
-   </g>
-   <g id="text_16">
-    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="194.573656" y="24.506095" transform="rotate(-0 194.573656 24.506095)">18,0</text>
-   </g>
-   <g id="patch_5">
-    <path d="M 102.782656 42.238957 
-L 188.714656 42.238957 
-L 188.714656 59.33113 
-L 102.782656 59.33113 
-z
-" clip-path="url(#pbb883c71be)" style="fill: #2a78d6"/>
+" clip-path="url(#p6eefcd0ca3)" style="fill: #2a78d6"/>
    </g>
    <g id="text_17">
-    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="192.620656" y="52.993051" transform="rotate(-0 192.620656 52.993051)">17,6</text>
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="200.616312" y="24.546008" transform="rotate(-0 200.616312 24.546008)">18,0</text>
    </g>
-   <g id="patch_6">
-    <path d="M 102.782656 70.725913 
-L 214.591906 70.725913 
-L 214.591906 87.818087 
-L 102.782656 87.818087 
+   <g id="patch_5">
+    <path d="M 108.825312 40.608 
+L 194.757313 40.608 
+L 194.757313 56.268 
+L 108.825312 56.268 
 z
-" clip-path="url(#pbb883c71be)" style="fill: #2a78d6"/>
+" clip-path="url(#p6eefcd0ca3)" style="fill: #2a78d6"/>
    </g>
    <g id="text_18">
-    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="218.497906" y="81.480008" transform="rotate(-0 218.497906 81.480008)">22,9</text>
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="198.663313" y="50.646008" transform="rotate(-0 198.663313 50.646008)">17,6</text>
    </g>
-   <g id="patch_7">
-    <path d="M 102.782656 99.21287 
-L 224.356906 99.21287 
-L 224.356906 116.305043 
-L 102.782656 116.305043 
+   <g id="patch_6">
+    <path d="M 108.825312 66.708 
+L 220.634563 66.708 
+L 220.634563 82.368 
+L 108.825312 82.368 
 z
-" clip-path="url(#pbb883c71be)" style="fill: #2a78d6"/>
+" clip-path="url(#p6eefcd0ca3)" style="fill: #2a78d6"/>
    </g>
    <g id="text_19">
-    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="228.262906" y="109.966964" transform="rotate(-0 228.262906 109.966964)">24,9</text>
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="224.540562" y="76.746008" transform="rotate(-0 224.540562 76.746008)">22,9</text>
    </g>
-   <g id="patch_8">
-    <path d="M 102.782656 127.699826 
-L 430.398406 127.699826 
-L 430.398406 144.792 
-L 102.782656 144.792 
+   <g id="patch_7">
+    <path d="M 108.825312 92.808 
+L 230.399563 92.808 
+L 230.399563 108.468 
+L 108.825312 108.468 
 z
-" clip-path="url(#pbb883c71be)" style="fill: #2a78d6"/>
+" clip-path="url(#p6eefcd0ca3)" style="fill: #2a78d6"/>
    </g>
    <g id="text_20">
-    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="434.304406" y="138.453921" transform="rotate(-0 434.304406 138.453921)">67,1</text>
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="234.305563" y="102.846008" transform="rotate(-0 234.305563 102.846008)">24,9</text>
+   </g>
+   <g id="patch_8">
+    <path d="M 108.825312 118.908 
+L 213.310812 118.908 
+L 213.310812 134.568 
+L 108.825312 134.568 
+z
+" clip-path="url(#p6eefcd0ca3)" style="fill: #2a78d6"/>
+   </g>
+   <g id="text_21">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="217.216813" y="128.946008" transform="rotate(-0 217.216813 128.946008)">21,4</text>
+   </g>
+   <g id="patch_9">
+    <path d="M 108.825312 145.008 
+L 436.441062 145.008 
+L 436.441062 160.668 
+L 108.825312 160.668 
+z
+" clip-path="url(#p6eefcd0ca3)" style="fill: #2a78d6"/>
+   </g>
+   <g id="text_22">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="440.347062" y="155.046008" transform="rotate(-0 440.347062 155.046008)">67,1</text>
    </g>
   </g>
  </g>
  <defs>
-  <clipPath id="pbb883c71be">
-   <rect x="102.782656" y="7.2" width="390.6" height="144.144"/>
+  <clipPath id="p6eefcd0ca3">
+   <rect x="108.825312" y="7.2" width="390.6" height="160.776"/>
   </clipPath>
  </defs>
 </svg>
@@ -429,12 +446,22 @@ z
 <p>A <b>cooperative matrix</b> foi confirmada em uso na RTX 3050: os shaders de convolução usam <code>OpCooperativeMatrixMulAddKHR</code>, e desligá-la leva o FP16 de 9,8 para 13,0 ms (medições únicas).</p>
 <div class="table-wrap "><table><thead><tr><th>Variante ncnn (medianas)</th><th class="num">Entrada na GPU</th><th class="num">Entrada na CPU (com cópias)</th><th class="num">GPU (MiB)</th><th>Validação</th></tr></thead><tbody><tr><td><b>RTX 3050 FP16</b> (cooperative matrix)</td><td class="num"><b>9,69 ms (103 FPS)</b></td><td class="num">10,17 ms</td><td class="num">~124</td><td>8/8</td></tr><tr><td>RTX 3050 FP32</td><td class="num">18,55 ms (54 FPS)</td><td class="num">19,19 ms</td><td class="num">~196</td><td>8/8</td></tr><tr><td>CPU FP32 (6 P-cores)</td><td class="num">—</td><td class="num">56,89 ms</td><td class="num">—</td><td>8/8</td></tr><tr><td>Intel integrada FP16 <span class='small'>(uma rodada)</span></td><td class="num">229,7 ms</td><td class="num">230,5 ms</td><td class="num">—</td><td>6/8</td></tr><tr><td>Intel integrada FP32 <span class='small'>(uma rodada)</span></td><td class="num">433,0 ms</td><td class="num">437,0 ms</td><td class="num">—</td><td>8/8</td></tr></tbody></table></div>
 <div class="note"><b>GPU integrada:</b> o benchmark controlado da Intel foi <b>interrompido por decisão do Nicolas, por ser muito lenta</b>: cada medição levava de 2 a 4 minutos. Os números acima são de uma única rodada, sem mediana. Em FP16 ela é cerca de 15× mais lenta que a CPU com OpenVINO INT8. Duas imagens falharam em FP16 por diferença de score (0,0051 e 0,0093 contra 0,005); com FP16 só no armazenamento e a conta em FP32, passaram 8/8.</div>
-<h2 class='newpage'>9. Comparação geral</h2><div class="figure"><svg xmlns:xlink="http://www.w3.org/1999/xlink" width="439.145pt" height="226.712703pt" viewBox="0 0 439.145 226.712703" xmlns="http://www.w3.org/2000/svg" version="1.1">
+
+<h2 class='newpage'>9. Engine próprio em C++ (PBI-097)</h2>
+<p>Depois de medir os runtimes prontos, a pergunta seguinte foi: <b>um engine escrito do zero, especializado neste grafo e sem nenhuma biblioteca de inferência, chega perto do OpenVINO?</b> A abordagem é a de um compilador, não de um interpretador: um script Python lê o ONNX (cortado antes da seleção top-300, como no ncnn) e gera um <code>model.cpp</code> com uma chamada por operação, formatos fixos e todos os buffers planejados numa única arena. Os pesos, já reorganizados no formato que os kernels leem, ficam embutidos no executável. O binário <code>yolo_engine</code> depende só de libc, libstdc++, libm e libgcc: sem BLAS, sem OpenMP, sem runtime.</p>
+<p>O trabalho foi feito em cinco marcos, cada um validado com as mesmas referências e tolerâncias FP32 estritas:</p>
+<div class="table-wrap "><table><thead><tr><th>Marco</th><th>O que entrou</th><th class="num">Threads</th><th class="num">Latência</th><th class="num">% do pico</th><th>Validação</th></tr></thead><tbody><tr><td>M1</td><td>loops diretos de referência (oráculo dos testes)</td><td class="num">1</td><td class="num">21.692 ms</td><td class="num">0,1%</td><td>8/8</td></tr><tr><td>M2</td><td>convolução como GEMM, micro-kernel AVX2/FMA, depthwise vetorizada</td><td class="num">1</td><td class="num">578 ms</td><td class="num">4,7%</td><td>8/8</td></tr><tr><td>M3</td><td>bias + SiLU + residual no epílogo, concat sem cópia, arena 371 → 25 MB</td><td class="num">1</td><td class="num">348 ms</td><td class="num">7,8%</td><td>8/8</td></tr><tr><td>M4</td><td>pool de threads próprio, fixado nos P-cores, sincronização por spin</td><td class="num">6</td><td class="num">79 ms</td><td class="num">34%</td><td>8/8</td></tr><tr><td><b>M5</b></td><td>painéis empacotados, kernel 6×16, grade 2D por camada, head e transposições rápidas</td><td class="num">6</td><td class="num"><b>46,67 ms</b></td><td class="num"><b>58%</b></td><td><b>8/8</b></td></tr></tbody></table></div><p class="small">M1–M4: medições rápidas, sem controle térmico. M5: benchmark final abaixo. Percentual sobre o pico assumido de 800 GFLOPS (6 × 32 FLOP/ciclo × 4,2 GHz).</p>
+<p>A revisão independente encontrou quatro erros no gerador (ordem de produção do residual, padding assimétrico, views da entrada e consumidores escondidos atrás de aliases). Nenhum ocorria neste grafo, mas todos foram corrigidos e ganharam testes com grafos ONNX sintéticos. No M5, as convoluções densas passaram a ocupar ~92% do tempo; o head e as transposições caíram de 7 ms para 1 ms.</p>
+<h3>Benchmark final</h3>
+<p>Mesmo protocolo térmico (3 rodadas rotativas, 60 s de resfriamento), com o OpenVINO FP32 na mesma sessão. O navegador e o chat não puderam ser fechados; em vez de descartar as execuções, o script registrou a carga externa. Para cada variante, o <b>ideal</b> é estimado pelo p5 (as 5% iterações mais rápidas, as menos afetadas) e a margem é quanto a média ficou acima dele. O ideal do OpenVINO (40,78 ms) bate com a mediana da rodada 3 em host ocioso (40,20 ms), o que dá confiança no método.</p>
+<div class="table-wrap "><table><thead><tr><th>Variante (medianas)</th><th class="num">Latência</th><th class="num">Ideal (p5)</th><th class="num">Margem</th><th class="num">p95</th><th class="num">FPS</th><th class="num">CPU externa</th></tr></thead><tbody><tr><td><b>Engine próprio, 6 threads</b></td><td class="num"><b>46,67 ms</b></td><td class="num">45,40 ms</td><td class="num">+2,8%</td><td class="num">49,08 ms</td><td class="num">21,4</td><td class="num">49,5%</td></tr><tr><td>Engine próprio, 1 thread</td><td class="num">215,81 ms</td><td class="num">212,06 ms</td><td class="num">+1,8%</td><td class="num">222,43 ms</td><td class="num">4,6</td><td class="num">47,6%</td></tr><tr><td>OpenVINO FP32 (6 P-cores)</td><td class="num">43,71 ms</td><td class="num">40,78 ms</td><td class="num">+7,2%</td><td class="num">49,35 ms</td><td class="num">22,9</td><td class="num">26,2%</td></tr></tbody></table></div>
+<div class="note"><b>Resultado:</b> o engine próprio fica a <b>1,07× do OpenVINO</b> na mesma sessão (1,11× comparando os ideais), à frente das medianas do eager (55,56 ms) e do ncnn CPU (56,89 ms) e praticamente empatado com o ONNX Runtime (43,63 ms). A meta de 45 ms ficou na fronteira: 46,67 ms medidos com carga, ~45,4 ms estimados sem ela. O que falta está nas convoluções densas: empacotamento repetido entre blocos de canais, epílogos e o layout NCHW; convolução direta em layout blocado (NCHWc8, como no oneDNN) é o próximo passo. O INT8 com AVX-VNNI fica para o PBI-098.</div>
+<h2>10. Comparação geral</h2><div class="figure"><svg xmlns:xlink="http://www.w3.org/1999/xlink" width="439.145pt" height="226.712703pt" viewBox="0 0 439.145 226.712703" xmlns="http://www.w3.org/2000/svg" version="1.1">
  <metadata>
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:date>2026-11-12T00:20:38.529684</dc:date>
+    <dc:date>2026-11-12T10:34:06.710127</dc:date>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -472,16 +499,16 @@ z
      <g id="line2d_1">
       <path d="M 32.755625 190.152 
 L 32.755625 7.2 
-" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pffaa40ab51)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_2">
       <defs>
-       <path id="mbad01983c1" d="M 0 0 
+       <path id="m1a5ae7ebce" d="M 0 0 
 L 0 3.5 
 " style="stroke: #6f6f6c; stroke-width: 0.8"/>
       </defs>
       <g>
-       <use xlink:href="#mbad01983c1" x="32.755625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m1a5ae7ebce" x="32.755625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_1">
@@ -492,11 +519,11 @@ L 0 3.5
      <g id="line2d_3">
       <path d="M 81.580625 190.152 
 L 81.580625 7.2 
-" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pffaa40ab51)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_4">
       <g>
-       <use xlink:href="#mbad01983c1" x="81.580625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m1a5ae7ebce" x="81.580625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_2">
@@ -507,11 +534,11 @@ L 81.580625 7.2
      <g id="line2d_5">
       <path d="M 130.405625 190.152 
 L 130.405625 7.2 
-" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pffaa40ab51)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_6">
       <g>
-       <use xlink:href="#mbad01983c1" x="130.405625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m1a5ae7ebce" x="130.405625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_3">
@@ -522,11 +549,11 @@ L 130.405625 7.2
      <g id="line2d_7">
       <path d="M 179.230625 190.152 
 L 179.230625 7.2 
-" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pffaa40ab51)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_8">
       <g>
-       <use xlink:href="#mbad01983c1" x="179.230625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m1a5ae7ebce" x="179.230625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_4">
@@ -537,11 +564,11 @@ L 179.230625 7.2
      <g id="line2d_9">
       <path d="M 228.055625 190.152 
 L 228.055625 7.2 
-" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pffaa40ab51)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_10">
       <g>
-       <use xlink:href="#mbad01983c1" x="228.055625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m1a5ae7ebce" x="228.055625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_5">
@@ -552,11 +579,11 @@ L 228.055625 7.2
      <g id="line2d_11">
       <path d="M 276.880625 190.152 
 L 276.880625 7.2 
-" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pffaa40ab51)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_12">
       <g>
-       <use xlink:href="#mbad01983c1" x="276.880625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m1a5ae7ebce" x="276.880625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_6">
@@ -567,11 +594,11 @@ L 276.880625 7.2
      <g id="line2d_13">
       <path d="M 325.705625 190.152 
 L 325.705625 7.2 
-" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pffaa40ab51)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_14">
       <g>
-       <use xlink:href="#mbad01983c1" x="325.705625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m1a5ae7ebce" x="325.705625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_7">
@@ -582,11 +609,11 @@ L 325.705625 7.2
      <g id="line2d_15">
       <path d="M 374.530625 190.152 
 L 374.530625 7.2 
-" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pffaa40ab51)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_16">
       <g>
-       <use xlink:href="#mbad01983c1" x="374.530625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m1a5ae7ebce" x="374.530625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_8">
@@ -597,11 +624,11 @@ L 374.530625 7.2
      <g id="line2d_17">
       <path d="M 423.355625 190.152 
 L 423.355625 7.2 
-" clip-path="url(#pcd2c11ec0b)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pffaa40ab51)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_18">
       <g>
-       <use xlink:href="#mbad01983c1" x="423.355625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m1a5ae7ebce" x="423.355625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_9">
@@ -637,7 +664,7 @@ L 130.405625 15.516
 L 130.405625 32.879077 
 L 32.755625 32.879077 
 z
-" clip-path="url(#pcd2c11ec0b)" style="fill: #2a78d6"/>
+" clip-path="url(#pffaa40ab51)" style="fill: #2a78d6"/>
    </g>
    <g id="text_13">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="134.311625" y="26.405546" transform="rotate(-0 134.311625 26.405546)">100</text>
@@ -648,7 +675,7 @@ L 147.982625 34.706769
 L 147.982625 52.069846 
 L 32.755625 52.069846 
 z
-" clip-path="url(#pcd2c11ec0b)" style="fill: #eb6834"/>
+" clip-path="url(#pffaa40ab51)" style="fill: #eb6834"/>
    </g>
    <g id="text_14">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="151.888625" y="45.596316" transform="rotate(-0 151.888625 45.596316)">118</text>
@@ -659,7 +686,7 @@ L 164.583125 53.897538
 L 164.583125 71.260615 
 L 32.755625 71.260615 
 z
-" clip-path="url(#pcd2c11ec0b)" style="fill: #1baf7a"/>
+" clip-path="url(#pffaa40ab51)" style="fill: #1baf7a"/>
    </g>
    <g id="text_15">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="168.489125" y="64.787085" transform="rotate(-0 168.489125 64.787085)">135</text>
@@ -670,7 +697,7 @@ L 85.486625 73.088308
 L 85.486625 90.451385 
 L 32.755625 90.451385 
 z
-" clip-path="url(#pcd2c11ec0b)" style="fill: #eda100"/>
+" clip-path="url(#pffaa40ab51)" style="fill: #eda100"/>
    </g>
    <g id="text_16">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="89.392625" y="83.977854" transform="rotate(-0 89.392625 83.977854)">54</text>
@@ -681,7 +708,7 @@ L 207.549125 106.900615
 L 207.549125 124.263692 
 L 32.755625 124.263692 
 z
-" clip-path="url(#pcd2c11ec0b)" style="fill: #2a78d6"/>
+" clip-path="url(#pffaa40ab51)" style="fill: #2a78d6"/>
    </g>
    <g id="text_17">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="211.455125" y="117.790162" transform="rotate(-0 211.455125 117.790162)">179</text>
@@ -692,7 +719,7 @@ L 281.763125 126.091385
 L 281.763125 143.454462 
 L 32.755625 143.454462 
 z
-" clip-path="url(#pcd2c11ec0b)" style="fill: #eb6834"/>
+" clip-path="url(#pffaa40ab51)" style="fill: #eb6834"/>
    </g>
    <g id="text_18">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="285.669125" y="136.980931" transform="rotate(-0 285.669125 136.980931)">255</text>
@@ -703,7 +730,7 @@ L 364.765625 145.282154
 L 364.765625 162.645231 
 L 32.755625 162.645231 
 z
-" clip-path="url(#pcd2c11ec0b)" style="fill: #1baf7a"/>
+" clip-path="url(#pffaa40ab51)" style="fill: #1baf7a"/>
    </g>
    <g id="text_19">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="368.671625" y="156.1717" transform="rotate(-0 368.671625 156.1717)">340</text>
@@ -714,7 +741,7 @@ L 133.335125 164.472923
 L 133.335125 181.836 
 L 32.755625 181.836 
 z
-" clip-path="url(#pcd2c11ec0b)" style="fill: #eda100"/>
+" clip-path="url(#pffaa40ab51)" style="fill: #eda100"/>
    </g>
    <g id="text_20">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="137.241125" y="175.362469" transform="rotate(-0 137.241125 175.362469)">103</text>
@@ -768,23 +795,24 @@ z
   </g>
  </g>
  <defs>
-  <clipPath id="pcd2c11ec0b">
+  <clipPath id="pffaa40ab51">
    <rect x="32.755625" y="7.2" width="390.6" height="182.952"/>
   </clipPath>
  </defs>
 </svg>
-</div><div class="table-wrap "><table><thead><tr><th>Dispositivo</th><th>Backend</th><th>Precisão</th><th class="num">Latência</th><th class="num">FPS</th><th>Dependências em execução</th><th>Artefato</th></tr></thead><tbody><tr><td>RTX 3050</td><td>PyTorch eager</td><td>FP32 / FP16</td><td class="num">10,02 / 5,59 ms</td><td class="num">100 / 179</td><td>Python, PyTorch, CUDA 12.8</td><td>.pt 15,9 MiB</td></tr><tr><td>RTX 3050</td><td>AOTInductor</td><td>FP32 / FP16</td><td class="num">8,46 / 3,92 ms</td><td class="num">118 / 255</td><td>libtorch, CUDA 12.8; sem Python</td><td>.pt2 29,8 / 16,0 MiB</td></tr><tr><td>RTX 3050</td><td><b>TensorRT</b></td><td>FP32 / FP16</td><td class="num"><b>7,39 / 2,94 ms</b></td><td class="num"><b>135 / 340</b></td><td>libnvinfer, CUDA 13.4</td><td>.plan 108,5 / 81,6 MiB</td></tr><tr><td>RTX 3050</td><td>ncnn Vulkan</td><td>FP32 / FP16</td><td class="num">18,55 / 9,69 ms</td><td class="num">54 / 103</td><td>libncnn, loader Vulkan</td><td>27,8 MiB</td></tr><tr><td>CPU</td><td>ONNX Runtime</td><td>FP32</td><td class="num">43,63 ms</td><td class="num">22,9</td><td>libonnxruntime</td><td>.onnx 28,4 MiB</td></tr><tr><td>CPU</td><td>OpenVINO</td><td>FP32 / INT8</td><td class="num">40,20 / <b>14,91 ms</b></td><td class="num">24,9 / <b>67,1</b></td><td>runtime OpenVINO</td><td>IR 28,0 / 7,7 MiB</td></tr><tr><td>CPU</td><td>ncnn</td><td>FP32</td><td class="num">56,89 ms</td><td class="num">17,6</td><td>libncnn</td><td>27,8 MiB</td></tr><tr><td>GPU integrada</td><td>ncnn Vulkan</td><td>FP32 / FP16</td><td class="num">~433 / ~230 ms</td><td class="num">2,3 / 4,4</td><td>libncnn, loader Vulkan</td><td>27,8 MiB</td></tr></tbody></table></div><p class="small">As linhas de eager, AOTInductor e TensorRT vêm de uma mesma sessão sem pausas (variação esperada de cerca de 3%); as de CPU e ncnn são medianas com controle térmico. Comparações entre sessões são aproximadas.</p><h3>Validação consolidada</h3><div class="table-wrap "><table><thead><tr><th>Artefato</th><th>PASS</th><th>Observação</th></tr></thead><tbody><tr><td>AOTInductor FP32 / FP16</td><td>8/8 · 8/8</td><td>maior diferença FP32: 0,035 px, score 0,0006</td></tr><tr><td>TensorRT FP32 padrão</td><td><span class='warn'>7/8</span></td><td>TF32: score 0,0019–0,0022 numa imagem (limite 0,001)</td></tr><tr><td>TensorRT FP32 sem TF32 / FP16</td><td>8/8 · 8/8</td><td>sem TF32: 3e-5 px, praticamente bit a bit</td></tr><tr><td>CPU: eager, ONNX Runtime, OpenVINO FP32 (2 configurações)</td><td>32/32</td><td>tolerâncias estritas</td></tr><tr><td>OpenVINO INT8</td><td>8/8</td><td>critério INT8; mAP −0,31 ponto</td></tr><tr><td>ncnn RTX 3050 FP32 / FP16</td><td>8/8 · 8/8</td><td>pós-processamento em C++ bit a bit</td></tr><tr><td>ncnn Intel FP32 / FP16</td><td>8/8 · <span class='warn'>6/8</span></td><td>FP16: score 0,0051 e 0,0093 (limite 0,005)</td></tr><tr><td>ncnn CPU FP32</td><td>8/8</td><td></td></tr><tr><td><b>Total</b></td><td><b>117/120</b></td><td>o <code>detect</code> com pré-processamento em C++ passou em todos os artefatos</td></tr></tbody></table></div>
-<h2>10. Problemas e lições</h2>
+</div><div class="table-wrap "><table><thead><tr><th>Dispositivo</th><th>Backend</th><th>Precisão</th><th class="num">Latência</th><th class="num">FPS</th><th>Dependências em execução</th><th>Artefato</th></tr></thead><tbody><tr><td>RTX 3050</td><td>PyTorch eager</td><td>FP32 / FP16</td><td class="num">10,02 / 5,59 ms</td><td class="num">100 / 179</td><td>Python, PyTorch, CUDA 12.8</td><td>.pt 15,9 MiB</td></tr><tr><td>RTX 3050</td><td>AOTInductor</td><td>FP32 / FP16</td><td class="num">8,46 / 3,92 ms</td><td class="num">118 / 255</td><td>libtorch, CUDA 12.8; sem Python</td><td>.pt2 29,8 / 16,0 MiB</td></tr><tr><td>RTX 3050</td><td><b>TensorRT</b></td><td>FP32 / FP16</td><td class="num"><b>7,39 / 2,94 ms</b></td><td class="num"><b>135 / 340</b></td><td>libnvinfer, CUDA 13.4</td><td>.plan 108,5 / 81,6 MiB</td></tr><tr><td>RTX 3050</td><td>ncnn Vulkan</td><td>FP32 / FP16</td><td class="num">18,55 / 9,69 ms</td><td class="num">54 / 103</td><td>libncnn, loader Vulkan</td><td>27,8 MiB</td></tr><tr><td>CPU</td><td>ONNX Runtime</td><td>FP32</td><td class="num">43,63 ms</td><td class="num">22,9</td><td>libonnxruntime</td><td>.onnx 28,4 MiB</td></tr><tr><td>CPU</td><td>OpenVINO</td><td>FP32 / INT8</td><td class="num">40,20 / <b>14,91 ms</b></td><td class="num">24,9 / <b>67,1</b></td><td>runtime OpenVINO</td><td>IR 28,0 / 7,7 MiB</td></tr><tr><td>CPU</td><td>ncnn</td><td>FP32</td><td class="num">56,89 ms</td><td class="num">17,6</td><td>libncnn</td><td>27,8 MiB</td></tr><tr><td>CPU</td><td><b>Engine próprio</b></td><td>FP32</td><td class="num">46,67 ms *</td><td class="num">21,4</td><td>só libc/libstdc++/libm</td><td>executável 56 MiB</td></tr><tr><td>GPU integrada</td><td>ncnn Vulkan</td><td>FP32 / FP16</td><td class="num">~433 / ~230 ms</td><td class="num">2,3 / 4,4</td><td>libncnn, loader Vulkan</td><td>27,8 MiB</td></tr></tbody></table></div><p class="small">As linhas de eager, AOTInductor e TensorRT vêm de uma mesma sessão sem pausas (variação esperada de cerca de 3%); as de CPU e ncnn são medianas com controle térmico. * Engine próprio: mediana com controle térmico, mas com carga externa no host; na mesma sessão o OpenVINO FP32 fez 43,71 ms. Comparações entre sessões são aproximadas. O executável do engine traz duas cópias dos pesos (original para a referência e pré-empacotada).</p><h3>Validação consolidada</h3><div class="table-wrap "><table><thead><tr><th>Artefato</th><th>PASS</th><th>Observação</th></tr></thead><tbody><tr><td>AOTInductor FP32 / FP16</td><td>8/8 · 8/8</td><td>maior diferença FP32: 0,035 px, score 0,0006</td></tr><tr><td>TensorRT FP32 padrão</td><td><span class='warn'>7/8</span></td><td>TF32: score 0,0019–0,0022 numa imagem (limite 0,001)</td></tr><tr><td>TensorRT FP32 sem TF32 / FP16</td><td>8/8 · 8/8</td><td>sem TF32: 3e-5 px, praticamente bit a bit</td></tr><tr><td>CPU: eager, ONNX Runtime, OpenVINO FP32 (2 configurações)</td><td>32/32</td><td>tolerâncias estritas</td></tr><tr><td>OpenVINO INT8</td><td>8/8</td><td>critério INT8; mAP −0,31 ponto</td></tr><tr><td>ncnn RTX 3050 FP32 / FP16</td><td>8/8 · 8/8</td><td>pós-processamento em C++ bit a bit</td></tr><tr><td>ncnn Intel FP32 / FP16</td><td>8/8 · <span class='warn'>6/8</span></td><td>FP16: score 0,0051 e 0,0093 (limite 0,005)</td></tr><tr><td>ncnn CPU FP32</td><td>8/8</td><td></td></tr><tr><td>Engine próprio: referência 1 thread / otimizado 1 e 6 threads</td><td>8/8 · 8/8 · 8/8</td><td>tolerâncias estritas; maior diferença 0,00003 px, score 0,000001</td></tr><tr><td><b>Total</b></td><td><b>141/144</b></td><td>o <code>detect</code> com pré-processamento em C++ passou em todos os artefatos</td></tr></tbody></table></div>
+<h2>11. Problemas e lições</h2>
 <ul>
 <li><b>Configuração assimétrica distorce comparações.</b> O TF32 ligado de um lado e desligado do outro inflou o ganho do AOTInductor de 1,18× para 1,29×. Toda medição passou a imprimir a configuração usada.</li>
 <li><b>A temperatura do notebook é uma variável.</b> Medições em sequência penalizaram quem rodou por último em até 25%. Resfriamento, ordem trocada e mediana resolveram.</li>
-<li><b>O ambiente é ruidoso.</b> Navegador, builds e testes de outros projetos invalidam medições de CPU; o monitor de carga foi essencial.</li>
+<li><b>O ambiente é ruidoso.</b> Navegador, builds e testes de outros projetos invalidam medições de CPU; o monitor de carga foi essencial. Quando não deu para fechar o navegador, medir assim mesmo, registrando a carga e estimando o ideal pelo p5, foi melhor que não medir.</li>
+<li><b>Engine próprio é viável, mas os últimos 10% são caros.</b> Sair dos loops diretos para GEMM deu 37×; fusões, threads e empacotamento levaram de 79 a 47 ms. Chegar ao OpenVINO exige kernels de convolução no nível do oneDNN.</li>
 <li><b>Dois CUDAs convivem</b> se ficarem em processos separados e se o build do AOTInductor apontar para os headers das wheels.</li>
 <li><b>Instalar o TensorRT pelo AUR</b> exigiu atualizar o sistema (mirror desatualizado), reiniciar (driver novo) e compilar com <code>-j1</code> (corrida entre as wheels Python no build paralelo).</li>
 <li><b>Exportação não é trivial:</b> o head end2end precisa ser ligado antes da fusão; o ncnn não tem TopK; o TensorRT 11 só aceita FP16 vindo do próprio ONNX.</li>
 </ul>
 
-<h2>11. Conclusão</h2>
+<h2>12. Conclusão</h2>
 <h3>Respostas às perguntas</h3>
 <ul>
 <li><b>Viabilidade: sim.</b> A YOLOv10s exportou e compilou em todos os caminhos sem operações customizadas (no ncnn, com o TopK em C++). As saídas ficaram dentro das tolerâncias, com duas exceções de causa conhecida: o TF32 do TensorRT e o FP16 na GPU integrada.</li>
@@ -794,7 +822,7 @@ z
 <h3>O que usar em cada alvo</h3>
 <ul>
 <li><b>GPU NVIDIA:</b> TensorRT, se for aceitável gerar o engine por GPU e por versão. AOTInductor, se o projeto já está no PyTorch e quer build rápido.</li>
-<li><b>CPU x86:</b> OpenVINO INT8, que dá 67 FPS nesta CPU, mais que os 30 FPS da webcam.</li>
+<li><b>CPU x86:</b> OpenVINO INT8, que dá 67 FPS nesta CPU, mais que os 30 FPS da webcam. Se a exigência for zero dependências, o engine próprio em FP32 entrega ~21 FPS com um único executável.</li>
 <li><b>GPU de qualquer fabricante:</b> ncnn com Vulkan funciona e é leve, mas paga caro na NVIDIA; vale quando CUDA não é opção.</li>
 <li><b>GPU integrada desta máquina:</b> não vale a pena para este modelo; a CPU é muito mais rápida.</li>
 </ul>
@@ -805,6 +833,6 @@ z
 <li>As 8 imagens de validação conferem equivalência numérica, não acurácia; a acurácia (mAP) só foi medida na comparação INT8 da CPU.</li>
 <li>Os artefatos do TensorRT e do AOTInductor são específicos da arquitetura da GPU (e, no TensorRT, da versão).</li>
 </ul>
-<h3>Próximo passo: um engine próprio em C++</h3>
-<p>Escrever, a partir do ONNX, um engine de inferência em C++ para a CPU: primeiro uma versão de referência validada com o mesmo código comum, depois um micro-kernel de GEMM com AVX2, fusão convolução + SiLU, layout blocado e threads, e por fim INT8 com AVX-VNNI. As metas são as medidas aqui: <b>abaixo de ~40 ms em FP32</b>, onde o OpenVINO já usa ~70% do pico e sobra pouco espaço, e <b>perto de 14,9 ms em INT8</b>, onde está a alavanca maior. O valor principal desse engine é um artefato sem nenhuma dependência e o domínio do caminho todo, que é exatamente o que a Enty precisa.</p>
-<h2>12. Apêndice: versões e reprodução</h2><div class="table-wrap "><table><thead><tr><th>Componente</th><th>Versão</th></tr></thead><tbody><tr><td>PyTorch / Ultralytics</td><td>2.11.0+cu128 / 8.4.210</td></tr><tr><td>TensorRT / cuDNN (sistema)</td><td>11.4.0.106 / 9.28.1</td></tr><tr><td>ONNX / ONNX Runtime / onnxscript</td><td>1.23.2 / 1.31.1 / 0.7.2</td></tr><tr><td>OpenVINO / NNCF / pycocotools</td><td>2026.4.1 / 3.4.0 / 2.0.11</td></tr><tr><td>ncnn / pnnx</td><td>20261020 / 20261020</td></tr><tr><td>Driver NVIDIA / Mesa</td><td>620.70 / 26.2.6</td></tr><tr><td>CUDA</td><td>13.4 (sistema, TensorRT) e 12.8 (wheels, PyTorch e AOTInductor)</td></tr><tr><td>Compiladores</td><td>GCC 16.2.1, CMake 4.4, Ninja 1.13, Python 3.12</td></tr></tbody></table></div><p>O passo a passo completo para reproduzir cada rodada (pacotes, comandos, saídas esperadas e solução de problemas) está no <code>README.md</code> e em <code>docs/REPRODUCE.md</code>, em inglês. Os relatórios técnicos de cada rodada estão em <code>docs/aoti-results.md</code>, <code>docs/tensorrt-results.md</code>, <code>docs/cpu-results.md</code> e <code>docs/ncnn-vulkan-results.md</code>. Este relatório é gerado por <code>docs/report/build_report.py</code>.</p></body></html>
+<h3>Próximo passo: INT8 no engine próprio</h3>
+<p>O engine próprio mostrou que um artefato sem nenhuma dependência chega a ~93% da velocidade do OpenVINO em FP32. A alavanca maior continua sendo o INT8 com AVX-VNNI, onde o OpenVINO faz 14,91 ms: o PBI-098 leva o engine para INT8, com calibração e avaliação de mAP próprias. Em paralelo, convolução direta em layout blocado pode fechar os ~7% restantes em FP32. Esse caminho, um gerador que transforma o grafo em código nativo especializado, é o que mais se aproxima do que a Enty precisa.</p>
+<h2>13. Apêndice: versões e reprodução</h2><div class="table-wrap "><table><thead><tr><th>Componente</th><th>Versão</th></tr></thead><tbody><tr><td>PyTorch / Ultralytics</td><td>2.11.0+cu128 / 8.4.210</td></tr><tr><td>TensorRT / cuDNN (sistema)</td><td>11.4.0.106 / 9.28.1</td></tr><tr><td>ONNX / ONNX Runtime / onnxscript</td><td>1.23.2 / 1.31.1 / 0.7.2</td></tr><tr><td>OpenVINO / NNCF / pycocotools</td><td>2026.4.1 / 3.4.0 / 2.0.11</td></tr><tr><td>ncnn / pnnx</td><td>20261020 / 20261020</td></tr><tr><td>Driver NVIDIA / Mesa</td><td>620.70 / 26.2.6</td></tr><tr><td>CUDA</td><td>13.4 (sistema, TensorRT) e 12.8 (wheels, PyTorch e AOTInductor)</td></tr><tr><td>Compiladores</td><td>GCC 16.2.1, CMake 4.4, Ninja 1.13, Python 3.12</td></tr></tbody></table></div><p>O passo a passo completo para reproduzir cada rodada (pacotes, comandos, saídas esperadas e solução de problemas) está no <code>README.md</code> e em <code>docs/REPRODUCE.md</code>, em inglês. Os relatórios técnicos de cada rodada estão em <code>docs/aoti-results.md</code>, <code>docs/tensorrt-results.md</code>, <code>docs/cpu-results.md</code> e <code>docs/ncnn-vulkan-results.md</code>. Este relatório é gerado por <code>docs/report/build_report.py</code>.</p></body></html>

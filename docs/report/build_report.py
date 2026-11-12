@@ -65,8 +65,8 @@ def chart_gpu():
 def chart_cpu():
     plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 9, "svg.fonttype": "none"})
     rows = [("PyTorch eager FP32", 18.0), ("ncnn FP32", 17.6), ("ONNX Runtime FP32", 22.9),
-            ("OpenVINO FP32", 24.9), ("OpenVINO INT8", 67.1)]
-    fig, ax = plt.subplots(figsize=(7.0, 2.6))
+            ("OpenVINO FP32", 24.9), ("Engine próprio FP32 *", 21.4), ("OpenVINO INT8", 67.1)]
+    fig, ax = plt.subplots(figsize=(7.0, 2.9))
     for i, (name, fps) in enumerate(rows):
         ax.barh(i, fps, height=0.6, color=BLUE, zorder=3)
         ax.text(fps + 0.8, i, f"{fps:.1f}".replace(".", ","), va="center", ha="left", color=INK,
@@ -74,7 +74,7 @@ def chart_cpu():
     ax.set_yticks(range(len(rows)), [r[0] for r in rows])
     ax.invert_yaxis()
     ax.set_xlim(0, 80)
-    ax.set_xlabel("Inferências por segundo (i5-13450HX, 6 threads nos P-cores; medianas)", color=INK2)
+    ax.set_xlabel("Inferências por segundo (i5-13450HX, 6 threads nos P-cores; medianas; * host com carga)", color=INK2)
     style_axes(ax)
     return svg(fig)
 
@@ -149,21 +149,21 @@ def build_html():
     S = []
     S.append("""
 <h1>YOLOv10s compilada para runtimes nativos</h1>
-<div class="sub">PBI-095 · Relatório completo do experimento · 12 de novembro de 2026 · notebook com RTX 3050 6GB Laptop e i5-13450HX</div>
+<div class="sub">PBI-095 e PBI-097 · Relatório completo do experimento · 12 de novembro de 2026 · notebook com RTX 3050 6GB Laptop e i5-13450HX</div>
 
-<p>Este relatório reúne as quatro rodadas de um experimento sobre uma pergunta simples: <b>quanto se ganha ao compilar uma rede de detecção para um artefato nativo e executá-la a partir de C++</b>, em vez de rodar o PyTorch em Python, o que esse artefato ainda exige para funcionar e se o resultado numérico continua o mesmo. A rede é a YOLOv10s (Ultralytics). Foram testados AOTInductor e TensorRT na GPU NVIDIA, ONNX Runtime e OpenVINO (FP32 e INT8) na CPU, e ncnn via Vulkan na GPU NVIDIA, na GPU integrada Intel e na CPU. Todos os backends foram validados contra a mesma referência, com tolerâncias fixas, e medidos com o mesmo protocolo.</p>
+<p>Este relatório reúne as quatro rodadas de um experimento sobre uma pergunta simples: <b>quanto se ganha ao compilar uma rede de detecção para um artefato nativo e executá-la a partir de C++</b>, em vez de rodar o PyTorch em Python, o que esse artefato ainda exige para funcionar e se o resultado numérico continua o mesmo. A rede é a YOLOv10s (Ultralytics). Foram testados AOTInductor e TensorRT na GPU NVIDIA, ONNX Runtime e OpenVINO (FP32 e INT8) na CPU, e ncnn via Vulkan na GPU NVIDIA, na GPU integrada Intel e na CPU. Por fim, um <b>engine de inferência próprio em C++</b>, gerado a partir do ONNX e sem nenhuma biblioteca de inferência, foi comparado ao OpenVINO na CPU. Todos os backends foram validados contra a mesma referência, com tolerâncias fixas, e medidos com o mesmo protocolo.</p>
 
 <div class="kpis">
   <div class="kpi"><b>2,94 ms</b><span>TensorRT FP16 na RTX 3050: 340 FPS, 1,90× o PyTorch eager</span></div>
   <div class="kpi"><b>14,91 ms</b><span>OpenVINO INT8 na CPU: 67 FPS, 3,73× o eager, com −0,31 ponto de mAP</span></div>
-  <div class="kpi"><b>117 de 120</b><span>validações PASS; as 3 exceções têm causa conhecida (TF32 e FP16 na GPU integrada)</span></div>
-  <div class="kpi"><b>sem Python</b><span>três runners C++ (AOTInductor, TensorRT e ncnn) executam a rede sem interpretador</span></div>
+  <div class="kpi"><b>141 de 144</b><span>validações PASS; as 3 exceções têm causa conhecida (TF32 e FP16 na GPU integrada)</span></div>
+  <div class="kpi"><b>46,67 ms</b><span>engine próprio em C++ na CPU, sem bibliotecas: 1,07× o tempo do OpenVINO FP32 na mesma sessão</span></div>
 </div>
 
 <nav><ol>
 <li>Motivação</li><li>Hardware</li><li>Método comum</li><li>Ponto de partida: a webcam</li>
 <li>Rodada 1: AOTInductor</li><li>Rodada 2: TensorRT</li><li>Rodada 3: CPU</li><li>Rodada 4: ncnn e Vulkan</li>
-<li>Comparação geral</li><li>Problemas e lições</li><li>Conclusão</li><li>Apêndice: versões e reprodução</li>
+<li>Engine próprio em C++</li><li>Comparação geral</li><li>Problemas e lições</li><li>Conclusão</li><li>Apêndice: versões e reprodução</li>
 </ol></nav>
 """)
 
@@ -299,8 +299,35 @@ def build_html():
 <div class="note"><b>GPU integrada:</b> o benchmark controlado da Intel foi <b>interrompido por decisão do Nicolas, por ser muito lenta</b>: cada medição levava de 2 a 4 minutos. Os números acima são de uma única rodada, sem mediana. Em FP16 ela é cerca de 15× mais lenta que a CPU com OpenVINO INT8. Duas imagens falharam em FP16 por diferença de score (0,0051 e 0,0093 contra 0,005); com FP16 só no armazenamento e a conta em FP32, passaram 8/8.</div>
 """)
 
-    # 9. Comparação geral
-    S.append("<h2 class='newpage'>9. Comparação geral</h2>")
+    # 9. Engine próprio
+    S.append("""
+<h2 class='newpage'>9. Engine próprio em C++ (PBI-097)</h2>
+<p>Depois de medir os runtimes prontos, a pergunta seguinte foi: <b>um engine escrito do zero, especializado neste grafo e sem nenhuma biblioteca de inferência, chega perto do OpenVINO?</b> A abordagem é a de um compilador, não de um interpretador: um script Python lê o ONNX (cortado antes da seleção top-300, como no ncnn) e gera um <code>model.cpp</code> com uma chamada por operação, formatos fixos e todos os buffers planejados numa única arena. Os pesos, já reorganizados no formato que os kernels leem, ficam embutidos no executável. O binário <code>yolo_engine</code> depende só de libc, libstdc++, libm e libgcc: sem BLAS, sem OpenMP, sem runtime.</p>
+<p>O trabalho foi feito em cinco marcos, cada um validado com as mesmas referências e tolerâncias FP32 estritas:</p>
+""")
+    S.append(table(["Marco", "O que entrou", "Threads", "Latência", "% do pico", "Validação"], [
+        ["M1", "loops diretos de referência (oráculo dos testes)", "1", "21.692 ms", "0,1%", "8/8"],
+        ["M2", "convolução como GEMM, micro-kernel AVX2/FMA, depthwise vetorizada", "1", "578 ms", "4,7%", "8/8"],
+        ["M3", "bias + SiLU + residual no epílogo, concat sem cópia, arena 371 → 25 MB", "1", "348 ms", "7,8%", "8/8"],
+        ["M4", "pool de threads próprio, fixado nos P-cores, sincronização por spin", "6", "79 ms", "34%", "8/8"],
+        ["<b>M5</b>", "painéis empacotados, kernel 6×16, grade 2D por camada, head e transposições rápidas", "6", "<b>46,67 ms</b>", "<b>58%</b>", "<b>8/8</b>"],
+    ], num_cols=(2, 3, 4)))
+    S.append("""<p class="small">M1–M4: medições rápidas, sem controle térmico. M5: benchmark final abaixo. Percentual sobre o pico assumido de 800 GFLOPS (6 × 32 FLOP/ciclo × 4,2 GHz).</p>
+<p>A revisão independente encontrou quatro erros no gerador (ordem de produção do residual, padding assimétrico, views da entrada e consumidores escondidos atrás de aliases). Nenhum ocorria neste grafo, mas todos foram corrigidos e ganharam testes com grafos ONNX sintéticos. No M5, as convoluções densas passaram a ocupar ~92% do tempo; o head e as transposições caíram de 7 ms para 1 ms.</p>
+<h3>Benchmark final</h3>
+<p>Mesmo protocolo térmico (3 rodadas rotativas, 60 s de resfriamento), com o OpenVINO FP32 na mesma sessão. O navegador e o chat não puderam ser fechados; em vez de descartar as execuções, o script registrou a carga externa. Para cada variante, o <b>ideal</b> é estimado pelo p5 (as 5% iterações mais rápidas, as menos afetadas) e a margem é quanto a média ficou acima dele. O ideal do OpenVINO (40,78 ms) bate com a mediana da rodada 3 em host ocioso (40,20 ms), o que dá confiança no método.</p>
+""")
+    S.append(table(["Variante (medianas)", "Latência", "Ideal (p5)", "Margem", "p95", "FPS", "CPU externa"], [
+        ["<b>Engine próprio, 6 threads</b>", "<b>46,67 ms</b>", "45,40 ms", "+2,8%", "49,08 ms", "21,4", "49,5%"],
+        ["Engine próprio, 1 thread", "215,81 ms", "212,06 ms", "+1,8%", "222,43 ms", "4,6", "47,6%"],
+        ["OpenVINO FP32 (6 P-cores)", "43,71 ms", "40,78 ms", "+7,2%", "49,35 ms", "22,9", "26,2%"],
+    ], num_cols=(1, 2, 3, 4, 5, 6)))
+    S.append("""
+<div class="note"><b>Resultado:</b> o engine próprio fica a <b>1,07× do OpenVINO</b> na mesma sessão (1,11× comparando os ideais), à frente das medianas do eager (55,56 ms) e do ncnn CPU (56,89 ms) e praticamente empatado com o ONNX Runtime (43,63 ms). A meta de 45 ms ficou na fronteira: 46,67 ms medidos com carga, ~45,4 ms estimados sem ela. O que falta está nas convoluções densas: empacotamento repetido entre blocos de canais, epílogos e o layout NCHW; convolução direta em layout blocado (NCHWc8, como no oneDNN) é o próximo passo. O INT8 com AVX-VNNI fica para o PBI-098.</div>
+""")
+
+    # 10. Comparação geral
+    S.append("<h2>10. Comparação geral</h2>")
     S.append(f'<div class="figure">{gpu_chart}</div>')
     S.append(table(["Dispositivo", "Backend", "Precisão", "Latência", "FPS", "Dependências em execução", "Artefato"], [
         ["RTX 3050", "PyTorch eager", "FP32 / FP16", "10,02 / 5,59 ms", "100 / 179", "Python, PyTorch, CUDA 12.8", ".pt 15,9 MiB"],
@@ -310,9 +337,10 @@ def build_html():
         ["CPU", "ONNX Runtime", "FP32", "43,63 ms", "22,9", "libonnxruntime", ".onnx 28,4 MiB"],
         ["CPU", "OpenVINO", "FP32 / INT8", "40,20 / <b>14,91 ms</b>", "24,9 / <b>67,1</b>", "runtime OpenVINO", "IR 28,0 / 7,7 MiB"],
         ["CPU", "ncnn", "FP32", "56,89 ms", "17,6", "libncnn", "27,8 MiB"],
+        ["CPU", "<b>Engine próprio</b>", "FP32", "46,67 ms *", "21,4", "só libc/libstdc++/libm", "executável 56 MiB"],
         ["GPU integrada", "ncnn Vulkan", "FP32 / FP16", "~433 / ~230 ms", "2,3 / 4,4", "libncnn, loader Vulkan", "27,8 MiB"],
     ], num_cols=(3, 4)))
-    S.append("""<p class="small">As linhas de eager, AOTInductor e TensorRT vêm de uma mesma sessão sem pausas (variação esperada de cerca de 3%); as de CPU e ncnn são medianas com controle térmico. Comparações entre sessões são aproximadas.</p>""")
+    S.append("""<p class="small">As linhas de eager, AOTInductor e TensorRT vêm de uma mesma sessão sem pausas (variação esperada de cerca de 3%); as de CPU e ncnn são medianas com controle térmico. * Engine próprio: mediana com controle térmico, mas com carga externa no host; na mesma sessão o OpenVINO FP32 fez 43,71 ms. Comparações entre sessões são aproximadas. O executável do engine traz duas cópias dos pesos (original para a referência e pré-empacotada).</p>""")
     S.append("<h3>Validação consolidada</h3>")
     S.append(table(["Artefato", "PASS", "Observação"], [
         ["AOTInductor FP32 / FP16", "8/8 · 8/8", "maior diferença FP32: 0,035 px, score 0,0006"],
@@ -323,16 +351,18 @@ def build_html():
         ["ncnn RTX 3050 FP32 / FP16", "8/8 · 8/8", "pós-processamento em C++ bit a bit"],
         ["ncnn Intel FP32 / FP16", "8/8 · <span class='warn'>6/8</span>", "FP16: score 0,0051 e 0,0093 (limite 0,005)"],
         ["ncnn CPU FP32", "8/8", ""],
-        ["<b>Total</b>", "<b>117/120</b>", "o <code>detect</code> com pré-processamento em C++ passou em todos os artefatos"],
+        ["Engine próprio: referência 1 thread / otimizado 1 e 6 threads", "8/8 · 8/8 · 8/8", "tolerâncias estritas; maior diferença 0,00003 px, score 0,000001"],
+        ["<b>Total</b>", "<b>141/144</b>", "o <code>detect</code> com pré-processamento em C++ passou em todos os artefatos"],
     ]))
 
     # 10. Problemas e lições
     S.append("""
-<h2>10. Problemas e lições</h2>
+<h2>11. Problemas e lições</h2>
 <ul>
 <li><b>Configuração assimétrica distorce comparações.</b> O TF32 ligado de um lado e desligado do outro inflou o ganho do AOTInductor de 1,18× para 1,29×. Toda medição passou a imprimir a configuração usada.</li>
 <li><b>A temperatura do notebook é uma variável.</b> Medições em sequência penalizaram quem rodou por último em até 25%. Resfriamento, ordem trocada e mediana resolveram.</li>
-<li><b>O ambiente é ruidoso.</b> Navegador, builds e testes de outros projetos invalidam medições de CPU; o monitor de carga foi essencial.</li>
+<li><b>O ambiente é ruidoso.</b> Navegador, builds e testes de outros projetos invalidam medições de CPU; o monitor de carga foi essencial. Quando não deu para fechar o navegador, medir assim mesmo, registrando a carga e estimando o ideal pelo p5, foi melhor que não medir.</li>
+<li><b>Engine próprio é viável, mas os últimos 10% são caros.</b> Sair dos loops diretos para GEMM deu 37×; fusões, threads e empacotamento levaram de 79 a 47 ms. Chegar ao OpenVINO exige kernels de convolução no nível do oneDNN.</li>
 <li><b>Dois CUDAs convivem</b> se ficarem em processos separados e se o build do AOTInductor apontar para os headers das wheels.</li>
 <li><b>Instalar o TensorRT pelo AUR</b> exigiu atualizar o sistema (mirror desatualizado), reiniciar (driver novo) e compilar com <code>-j1</code> (corrida entre as wheels Python no build paralelo).</li>
 <li><b>Exportação não é trivial:</b> o head end2end precisa ser ligado antes da fusão; o ncnn não tem TopK; o TensorRT 11 só aceita FP16 vindo do próprio ONNX.</li>
@@ -341,7 +371,7 @@ def build_html():
 
     # 11. Conclusão
     S.append("""
-<h2>11. Conclusão</h2>
+<h2>12. Conclusão</h2>
 <h3>Respostas às perguntas</h3>
 <ul>
 <li><b>Viabilidade: sim.</b> A YOLOv10s exportou e compilou em todos os caminhos sem operações customizadas (no ncnn, com o TopK em C++). As saídas ficaram dentro das tolerâncias, com duas exceções de causa conhecida: o TF32 do TensorRT e o FP16 na GPU integrada.</li>
@@ -351,7 +381,7 @@ def build_html():
 <h3>O que usar em cada alvo</h3>
 <ul>
 <li><b>GPU NVIDIA:</b> TensorRT, se for aceitável gerar o engine por GPU e por versão. AOTInductor, se o projeto já está no PyTorch e quer build rápido.</li>
-<li><b>CPU x86:</b> OpenVINO INT8, que dá 67 FPS nesta CPU, mais que os 30 FPS da webcam.</li>
+<li><b>CPU x86:</b> OpenVINO INT8, que dá 67 FPS nesta CPU, mais que os 30 FPS da webcam. Se a exigência for zero dependências, o engine próprio em FP32 entrega ~21 FPS com um único executável.</li>
 <li><b>GPU de qualquer fabricante:</b> ncnn com Vulkan funciona e é leve, mas paga caro na NVIDIA; vale quando CUDA não é opção.</li>
 <li><b>GPU integrada desta máquina:</b> não vale a pena para este modelo; a CPU é muito mais rápida.</li>
 </ul>
@@ -362,12 +392,12 @@ def build_html():
 <li>As 8 imagens de validação conferem equivalência numérica, não acurácia; a acurácia (mAP) só foi medida na comparação INT8 da CPU.</li>
 <li>Os artefatos do TensorRT e do AOTInductor são específicos da arquitetura da GPU (e, no TensorRT, da versão).</li>
 </ul>
-<h3>Próximo passo: um engine próprio em C++</h3>
-<p>Escrever, a partir do ONNX, um engine de inferência em C++ para a CPU: primeiro uma versão de referência validada com o mesmo código comum, depois um micro-kernel de GEMM com AVX2, fusão convolução + SiLU, layout blocado e threads, e por fim INT8 com AVX-VNNI. As metas são as medidas aqui: <b>abaixo de ~40 ms em FP32</b>, onde o OpenVINO já usa ~70% do pico e sobra pouco espaço, e <b>perto de 14,9 ms em INT8</b>, onde está a alavanca maior. O valor principal desse engine é um artefato sem nenhuma dependência e o domínio do caminho todo, que é exatamente o que a Enty precisa.</p>
+<h3>Próximo passo: INT8 no engine próprio</h3>
+<p>O engine próprio mostrou que um artefato sem nenhuma dependência chega a ~93% da velocidade do OpenVINO em FP32. A alavanca maior continua sendo o INT8 com AVX-VNNI, onde o OpenVINO faz 14,91 ms: o PBI-098 leva o engine para INT8, com calibração e avaliação de mAP próprias. Em paralelo, convolução direta em layout blocado pode fechar os ~7% restantes em FP32. Esse caminho, um gerador que transforma o grafo em código nativo especializado, é o que mais se aproxima do que a Enty precisa.</p>
 """)
 
     # Apêndice
-    S.append("<h2>12. Apêndice: versões e reprodução</h2>")
+    S.append("<h2>13. Apêndice: versões e reprodução</h2>")
     S.append(table(["Componente", "Versão"], [
         ["PyTorch / Ultralytics", "2.11.0+cu128 / 8.4.210"],
         ["TensorRT / cuDNN (sistema)", "11.4.0.106 / 9.28.1"],
