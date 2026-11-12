@@ -24,7 +24,7 @@
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_FAILURE_USERMSG
-#include "third_party/stb_image.h"
+#include <stb_image.h>
 
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;

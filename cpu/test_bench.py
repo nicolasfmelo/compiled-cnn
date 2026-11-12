@@ -43,10 +43,10 @@ class BenchmarkTests(unittest.TestCase):
             summarize(directory)
 
     def run_shell(self, mode):
-        native = self.root / 'native'
+        native = self.root / 'scripts'
         native.mkdir()
         script = native / 'bench_cpu.sh'
-        script.write_text((ROOT / 'native/bench_cpu.sh').read_text())
+        script.write_text((ROOT / 'scripts/bench_cpu.sh').read_text())
         binary = self.root / 'bin'
         binary.mkdir()
         stubs = {

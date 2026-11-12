@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class EngineClient:
     def __init__(self, precision='fp32', threads=6, cpus='0,2,4,6,8,10', binary=None):
         self.process = subprocess.Popen(
-            [str(binary or ROOT/'engine/build/yolo_engine'), 'serve', '--precision', precision,
+            [str(binary or ROOT/'build/bin/yolo_engine'), 'serve', '--precision', precision,
              '--threads', str(threads), '--cpus', cpus],
             cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 

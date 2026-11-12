@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT))
 from cpu.common import compare, read_binary
 from engine.engine_client import EngineClient
 
-BINARY = ROOT/'engine/build/yolo_engine'
+BINARY = ROOT/'build/bin/yolo_engine'
 
 
 class EngineProtocolTests(unittest.TestCase):

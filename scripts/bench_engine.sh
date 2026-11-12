@@ -2,7 +2,8 @@
 # PBI-098: four variants, three rotating rounds, up to five contention retries.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-if (( $# != 0 )); then echo 'usage: [BENCH_SMOKE=1] [BENCH_CONTENDED=1] bash native/bench_engine.sh' >&2; exit 2; fi
+BIN=${CNN_BIN:-build/bin}  # binaries from the top-level CMake build (cmake --preset release)
+if (( $# != 0 )); then echo 'usage: [BENCH_SMOKE=1] [BENCH_CONTENDED=1] bash scripts/bench_engine.sh' >&2; exit 2; fi
 variants=(engine-fp32-6t engine-int8-6t ov-cpu-fp32 ov-cpu-int8)
 rounds=3
 cooldown=60
@@ -34,7 +35,7 @@ rm -f "$summary" "$runs"/round-{1,2,3}-{engine-fp32-6t,engine-int8-6t,ov-cpu-fp3
         if (( status == 0 )); then
           if [[ "$variant" == ov-cpu-* ]]; then
             # Keep cpu/bench.py's own monitor, precision, warmup and iterations
-            # exactly as in native/bench_cpu.sh, also during smoke runs.
+            # exactly as in scripts/bench_cpu.sh, also during smoke runs.
             taskset -c 0,2,4,6,8,10 uv run python cpu/bench.py --variant "$variant" \
               --output-json "$runs/round-$round-$variant.json" | tee "$output.pending" || status=$?
             if (( status == 0 )); then mv "$output.pending" "$output"; else rm -f "$output.pending"; fi
@@ -43,7 +44,7 @@ rm -f "$summary" "$runs"/round-{1,2,3}-{engine-fp32-6t,engine-int8-6t,ov-cpu-fp3
             cpus=0,2,4,6,8,10
             precision=${variant#engine-}
             precision=${precision%-6t}
-            command=(taskset -c "$cpus" engine/build/yolo_engine bench --precision "$precision" --threads "$threads" "${native_options[@]}")
+            command=(taskset -c "$cpus" "$BIN/yolo_engine" bench --precision "$precision" --threads "$threads" "${native_options[@]}")
             uv run python - "$output" "${command[@]}" <<'PY' || status=$?
 import subprocess
 import sys

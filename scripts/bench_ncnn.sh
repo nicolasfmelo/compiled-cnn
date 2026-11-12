@@ -2,11 +2,12 @@
 # Five variants by default (nine with --with-intel), three rotating rounds.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+BIN=${CNN_BIN:-build/bin}  # binaries from the top-level CMake build (cmake --preset release)
 variants=(nvidia-fp32-resident nvidia-fp16-resident nvidia-fp32-host nvidia-fp16-host cpu-fp32-host)
 if (( $# == 1 )) && [[ "$1" == --with-intel ]]; then
   variants+=(intel-fp32-resident intel-fp16-resident intel-fp32-host intel-fp16-host)
 elif (( $# != 0 )); then
-  echo 'usage: bash native/bench_ncnn.sh [--with-intel]' >&2
+  echo 'usage: bash scripts/bench_ncnn.sh [--with-intel]' >&2
   exit 2
 fi
 count=${#variants[@]}
@@ -30,7 +31,7 @@ rm -f artifacts/bench/round4-summary.txt "$runs"/round-{1,2,3}-*.txt
         status=0
         uv run python cpu/bench.py --check-host || status=$?
         if (( status == 0 )); then
-          command=(ncnn/cpp/build/yolo_ncnn bench artifacts/ncnn/yolov10s.ncnn.param
+          command=("$BIN/yolo_ncnn" bench artifacts/ncnn/yolov10s.ncnn.param
                    artifacts/ncnn/yolov10s.ncnn.bin --device "$device" --precision "$precision" --mode "$mode")
           if [[ "$device" == cpu ]]; then
             command=(taskset -c 0,2,4,6,8,10 "${command[@]}")

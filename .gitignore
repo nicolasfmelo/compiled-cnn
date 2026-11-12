@@ -1,13 +1,14 @@
+# Python
 .venv/
 __pycache__/
+
+# Weights and generated models (rebuilt by the export scripts)
 *.pt
 *.engine
 *.onnx
 runs/
 artifacts/
-aoti/cpp/build/
-trt/cpp/build/
-ncnn/cpp/build/
-engine/build*/
-/artifacts
-/.venv
+
+# CMake builds (top-level presets: build/, build-tsan/)
+build/
+build-*/
