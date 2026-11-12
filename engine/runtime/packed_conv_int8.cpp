@@ -15,10 +15,6 @@ __m256 even8(const float* p) {
     return _mm256_permutevar8x32_ps(_mm256_shuffle_ps(_mm256_loadu_ps(p),_mm256_loadu_ps(p+8),0x88),
                                    _mm256_setr_epi32(0,1,4,5,2,3,6,7));
 }
-__m256i interleave(__m256i a, __m256i b, __m256i c, __m256i d) {
-    return _mm256_or_si256(_mm256_or_si256(a,_mm256_slli_epi32(b,8)),
-                          _mm256_or_si256(_mm256_slli_epi32(c,16),_mm256_slli_epi32(d,24)));
-}
 template<class Finish>
 void microkernel(const int8_t* a, const uint8_t* b, int k4, Finish finish) {
     __m256i c00=_mm256_setzero_si256(),c01=c00,c10=c00,c11=c00,c20=c00,c21=c00,
@@ -43,8 +39,33 @@ void pack_int8(const Tensor& x, const Tensor& y, ConvParams p, int pos, int coun
     const int ih=x.shape[2],iw=x.shape[3],ow=y.shape[3],area=ih*iw;
     const int ks=p.kh*p.kw,k=x.shape[1]*ks,k4=(k+3)/4;
     const float inverse=1.f/scale;
+    if (p.kh==1 && p.kw==1 && p.sy==1 && p.sx==1 && p.py==0 && p.px==0
+            && ih==y.shape[2] && iw==ow) {
+        // Four compile-time byte slots avoid the generic packer's variable
+        // shifts and per-K coordinate mapping on the common 1x1 path.
+        for (int micro=0; micro<count; micro+=16) {
+            int size=std::min(16,count-micro);
+            uint8_t* panel=dst+micro/16*k4*64;
+            for (int c=0; c<x.shape[1]; c+=4) for (int half=0; half<2; ++half) {
+                int valid=std::clamp(size-half*8,0,8);
+                const __m256i mask=_mm256_cmpgt_epi32(_mm256_set1_epi32(valid),_mm256_setr_epi32(0,1,2,3,4,5,6,7));
+                auto read=[&](int channel) {
+                    if (channel>=x.shape[1] || valid==0) return _mm256_set1_epi32(zp);
+                    const float* src=x.data+channel*area+pos+micro+half*8;
+                    __m256 v=valid==8 ? _mm256_loadu_ps(src) : _mm256_maskload_ps(src,mask);
+                    return quantize(v,inverse,zp);
+                };
+                const __m256i a=read(c),b=read(c+1),cc=read(c+2),d=read(c+3);
+                const __m256i bytes=_mm256_or_si256(_mm256_or_si256(a,_mm256_slli_epi32(b,8)),
+                    _mm256_or_si256(_mm256_slli_epi32(cc,16),_mm256_slli_epi32(d,24)));
+                _mm256_storeu_si256(reinterpret_cast<__m256i*>(panel+c/4*64+half*32),bytes);
+            }
+        }
+        return;
+    }
     struct Mapping { int offsets[16]; int fast; };
-    std::vector<Mapping> maps(ks);
+    thread_local std::vector<Mapping> maps;
+    maps.resize(ks);
     for (int micro=0; micro<count; micro+=16) {
         const int size=std::min(16,count-micro);
         for (int ky=0; ky<p.kh; ++ky) for (int kx=0; kx<p.kw; ++kx) {
@@ -59,8 +80,7 @@ void pack_int8(const Tensor& x, const Tensor& y, ConvParams p, int pos, int coun
             if (m.fast==2 && m.offsets[15]+1>=area) m.fast=0;
         }
         uint8_t* panel=dst+(micro/16)*k4*64;
-        __m256i qlo[4],qhi[4];
-        for (int r=0; r<4; ++r) qlo[r]=qhi[r]=_mm256_set1_epi32(zp);
+        __m256i qlo=_mm256_setzero_si256(),qhi=qlo;
         int z=0;
         for (int c=0; c<x.shape[1]; ++c) for (int s=0; s<ks; ++s,++z) {
             const auto& m=maps[s];
@@ -71,17 +91,25 @@ void pack_int8(const Tensor& x, const Tensor& y, ConvParams p, int pos, int coun
             } else if (m.fast==2) {
                 lo=even8(channel+m.offsets[0]); hi=even8(channel+m.offsets[0]+16);
             } else {
-                alignas(32) float values[16];
-                for (int j=0; j<16; ++j) values[j]=m.offsets[j]>=0 ? channel[m.offsets[j]] : 0.f;
-                lo=_mm256_load_ps(values); hi=_mm256_load_ps(values+8);
+                const __m256i i0=_mm256_loadu_si256(reinterpret_cast<const __m256i*>(m.offsets));
+                const __m256i i1=_mm256_loadu_si256(reinterpret_cast<const __m256i*>(m.offsets+8));
+                const __m256 m0=_mm256_castsi256_ps(_mm256_cmpgt_epi32(i0,_mm256_set1_epi32(-1)));
+                const __m256 m1=_mm256_castsi256_ps(_mm256_cmpgt_epi32(i1,_mm256_set1_epi32(-1)));
+                lo=_mm256_mask_i32gather_ps(_mm256_setzero_ps(),channel,i0,m0,4);
+                hi=_mm256_mask_i32gather_ps(_mm256_setzero_ps(),channel,i1,m1,4);
             }
-            qlo[z%4]=quantize(lo,inverse,zp); qhi[z%4]=quantize(hi,inverse,zp);
+            const __m256i shift=_mm256_set1_epi32((z%4)*8);
+            qlo=_mm256_or_si256(qlo,_mm256_sllv_epi32(quantize(lo,inverse,zp),shift));
+            qhi=_mm256_or_si256(qhi,_mm256_sllv_epi32(quantize(hi,inverse,zp),shift));
             if (z%4==3 || z==k-1) {
-                _mm256_storeu_si256(reinterpret_cast<__m256i*>(panel+z/4*64),interleave(qlo[0],qlo[1],qlo[2],qlo[3]));
-                _mm256_storeu_si256(reinterpret_cast<__m256i*>(panel+z/4*64+32),interleave(qhi[0],qhi[1],qhi[2],qhi[3]));
-                // Only necessary for K%4 tails in the last group.
-                if (z==k-1) break;
-                if (k-z<=4) for (int r=0; r<4; ++r) qlo[r]=qhi[r]=_mm256_set1_epi32(zp);
+                if (z%4!=3) {
+                    const uint32_t padding=(uint32_t(zp)*0x01010101u) & (0xffffffffu<<((z%4+1)*8));
+                    qlo=_mm256_or_si256(qlo,_mm256_set1_epi32(static_cast<int32_t>(padding)));
+                    qhi=_mm256_or_si256(qhi,_mm256_set1_epi32(static_cast<int32_t>(padding)));
+                }
+                _mm256_storeu_si256(reinterpret_cast<__m256i*>(panel+z/4*64),qlo);
+                _mm256_storeu_si256(reinterpret_cast<__m256i*>(panel+z/4*64+32),qhi);
+                qlo=qhi=_mm256_setzero_si256();
             }
         }
     }
