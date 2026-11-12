@@ -90,6 +90,12 @@ int main(int argc, char** argv) {
             times.push_back(iteration()); model_total += model_ms; post_total += post_ms;
         }
         print_bench(times, load, first);
+        {
+            auto sorted = times;
+            std::sort(sorted.begin(), sorted.end());
+            std::cout << std::fixed << std::setprecision(2) << "best-case ms: p5 " << percentile(sorted, 0.05)
+                      << " | min " << sorted.front() << '\n';
+        }
         double mean = std::accumulate(times.begin(), times.end(), 0.0)/times.size();
         double gflops = engine::Model::flops()/1e6/mean;
         std::cout << "model ms: " << model_total/args.iters << " | post ms: " << post_total/args.iters

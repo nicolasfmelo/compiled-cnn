@@ -77,6 +77,11 @@ class ContentionMonitor:
         self.psutil = psutil
         self.previous = {}
         self.heavy = []
+        # BENCH_CONTENDED=1: a busy desktop (browser, chat) cannot be closed.
+        # Sustained external load is then recorded instead of discarding the run;
+        # build processes still discard it.
+        self.tolerate = os.environ.get('BENCH_CONTENDED') == '1'
+        self.load = []
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self.sample, daemon=True)
 
@@ -105,7 +110,9 @@ class ContentionMonitor:
                         contributors.append((process.pid, info['name'], round(delta / max(now - last, .001) * 100, 1)))
                 except self.psutil.Error:
                     pass
-            if self.previous and total / max(now - last, .001) > .75:
+            if self.previous:
+                self.load.append(total / max(now - last, .001) * 100)
+            if self.previous and not self.tolerate and total / max(now - last, .001) > .75:
                 self.heavy.append(('aggregate external CPU', round(total / (now - last) * 100, 1),
                                    sorted(contributors, key=lambda x: x[2], reverse=True)[:5]))
             self.previous, last = current, now
@@ -114,6 +121,9 @@ class ContentionMonitor:
     def finish(self):
         self.stop.set()
         self.thread.join()
+        if self.load:
+            print(f'external CPU: mean {np.mean(self.load):.1f}% | max {np.max(self.load):.1f}% '
+                  f'(100% = one core; contended mode={int(self.tolerate)})', flush=True)
         if self.heavy:
             raise RuntimeError('Discard this benchmark: external workload detected: ' + str(self.heavy[:10]))
 
@@ -203,6 +213,7 @@ def main():
     print('settings: ' + settings + ' warmup=20 iterations=200')
     print(f'latency ms: mean {mean:.2f} | p50 {np.percentile(times, 50):.2f} | p95 {np.percentile(times, 95):.2f}')
     print(f'throughput: {1000 / mean:.1f} it/s')
+    print(f'best-case ms: p5 {np.percentile(times, 5):.2f} | min {np.min(times):.2f}')
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
     print(f'peak RSS MiB: {rss:.1f}')
     print(f'load ms: {load_ms:.2f} | first run ms: {first_ms:.2f}')
@@ -212,6 +223,7 @@ def main():
     print(f'compute: model {gflops:.3f} GFLOPs | achieved {achieved:.2f} GFLOPS | peak FP32 {peak:.2f} GFLOPS | {achieved / peak * 100:.2f}% of peak')
     result = dict(variant=args.variant, settings=settings, times_ms=times, mean_ms=mean,
                   p50_ms=float(np.percentile(times, 50)), p95_ms=float(np.percentile(times, 95)),
+                  p5_ms=float(np.percentile(times, 5)),
                   throughput=1000/mean, rss_mib=rss, load_ms=load_ms, first_ms=first_ms,
                   model_mib=size/2**20, frequency_ghz=frequency, even_cpu_frequency_ghz=primary_frequency,
                   frequency_samples=len(sampler.values),
