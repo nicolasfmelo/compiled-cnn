@@ -30,6 +30,7 @@ void convolution(int ic, int oc, int h, int width, int kernel, int stride, int g
     for (int c = 0; c < oc; ++c) for (int z = 0; z < k; ++z) packed[(c/mr*k+z)*mr+c%mr] = w.storage[c*k+z];
     engine::Context ctx(true,threads,cpus);
     engine::ConvParams p{kernel,kernel,stride,stride,pad,pad,group,activation};
+    p.spatial_tile=32; p.output_chunk=12;
     engine::conv_ref(x.t,w.t,b.t,ref.t,p);
     engine::conv(ctx,x.t,w.t,b.t,opt.t,p,packed.data());
     equal(ref,opt,2e-4f);
@@ -58,10 +59,13 @@ int main(int argc, char** argv) {
         _mm256_store_ps(ys,engine::silu8(_mm256_load_ps(xs)));
         for (int j = 0; j < 8; ++j) if (!std::isfinite(ys[j]) || !std::signbit(ys[j])) throw std::runtime_error("silu8 extreme");
         for (int kernel : {1,3}) for (int stride : {1,2}) for (bool act : {false,true}) {
-            convolution(7,9,9,19,kernel,stride,1,act);
+            convolution(7,19,9,19,kernel,stride,1,act);
             convolution(17,8,13,23,kernel,stride,1,act);
             convolution(65,5,9,71,kernel,stride,1,act); // K and N panel tails
         }
+        for (int width=1; width<=19; ++width) for (int stride : {1,2})
+            convolution(3,13,1,width,3,stride,1,true);
+        convolution(513,13,3,19,3,1,1,true); // full-K > 4608, zero-padded output rows
         for (int kernel : {3,7}) for (int stride : {1,2}) for (bool act : {false,true})
             convolution(5,5,9,37,kernel,stride,5,act);
         convolution(6,10,5,9,3,2,2,false); // grouped fallback

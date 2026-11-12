@@ -4,7 +4,7 @@
 
 namespace engine {
 namespace {
-constexpr int MR = CONV_MR, NR = 16, NB = 64;
+constexpr int MR = CONV_MR, NR = 16;
 __m256i mask(int count) {
     return _mm256_cmpgt_epi32(_mm256_set1_epi32(count),_mm256_setr_epi32(0,1,2,3,4,5,6,7));
 }
@@ -95,13 +95,17 @@ void microkernel(const float* a, const float* b, float* y, int k, int ys, int ro
 void conv_dense(Context& ctx, const Tensor& x, const Tensor& b, Tensor& y, ConvParams p,
                 const float* packed, const Tensor* residual) {
     const int n=y.shape[2]*y.shape[3],oc=y.shape[1],k=x.shape[1]*p.kh*p.kw;
-    if (ctx.scratch[0].size()<static_cast<size_t>(k*NB)) throw std::runtime_error("packed panel scratch too small");
-    ctx.pool.parallel((n+NB-1)/NB,[&](size_t job,int worker) {
-        const int pos=static_cast<int>(job)*NB,count=std::min(NB,n-pos);
+    const int nb=p.spatial_tile, chunk=p.output_chunk ? p.output_chunk : (oc+MR-1)/MR*MR;
+    if (nb<NR || nb%NR || chunk<MR || chunk%MR) throw std::runtime_error("invalid convolution grid");
+    if (ctx.scratch[0].size()<static_cast<size_t>(k*nb)) throw std::runtime_error("packed panel scratch too small");
+    const int tiles=(n+nb-1)/nb, groups=(oc+chunk-1)/chunk;
+    ctx.pool.parallel(tiles*groups,[&](size_t job,int worker) {
+        const int pos=static_cast<int>(job%tiles)*nb,count=std::min(nb,n-pos);
+        const int first=static_cast<int>(job/tiles)*chunk,end=std::min(oc,first+chunk);
         float* panel=ctx.scratch[worker].data();
         pack_panel(x,y,p,pos,count,panel);
         for (int j=0; j<count; j+=NR)
-            for (int o=0; o<oc; o+=MR)
+            for (int o=first; o<end; o+=MR)
                 microkernel(packed+o/MR*k*MR,panel+j*k,y.data+o*n+pos+j,k,n,std::min(MR,oc-o),std::min(NR,count-j),
                             b.data+o,p.silu,residual ? residual->data+o*n+pos+j : nullptr);
     });

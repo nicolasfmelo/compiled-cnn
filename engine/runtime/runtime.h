@@ -54,7 +54,10 @@ struct Context {
     }
 };
 inline constexpr int CONV_MR = 6;
-struct ConvParams { int kh, kw, sy, sx, py, px, group, silu; };
+struct ConvParams {
+    int kh, kw, sy, sx, py, px, group, silu;
+    int spatial_tile = 64, output_chunk = 0;
+};
 inline float sigmoid(float x) {
     // Branching avoids overflow and preserves subnormal sigmoid(-100).
     if (x >= 0) return 1.f / (1.f + std::exp(-x));

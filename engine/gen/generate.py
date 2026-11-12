@@ -106,6 +106,15 @@ def compile_graph(source, destination, stage):
                 values[name] = Value((oc,), np.zeros(oc, np.float32))
                 ins.append(name)
             params['macs'] = oc*oh*ow*ic*kh*kw
+            k = ic*kh*kw
+            tile = 32 if k > 2048 else 64
+            spatial_jobs = (oh*ow+tile-1)//tile
+            splits = max(1, (24+spatial_jobs-1)//spatial_jobs)
+            chunk = ((oc+splits-1)//splits+5)//6*6
+            # Full B tile plus the learned-weight slice below 1 MiB, leaving
+            # 256 KiB of L2 for output/metadata and other activity.
+            cache_rows = max(6, ((1024*1024//(4*k)-tile)//6)*6)
+            params.update(spatial_tile=tile, output_chunk=min(chunk, cache_rows))
         elif kind == 'Sigmoid':
             out_shapes = [shapes[0]]
         elif kind == 'MaxPool':
@@ -406,7 +415,7 @@ public:
         x, y = t(ins[0]), t(outs[0])
         category = 'other'
         if kind == 'Conv':
-            args = ', '.join(str(op[k]) for k in ('kh', 'kw', 'sy', 'sx', 'py', 'px', 'group', 'silu'))
+            args = ', '.join(str(op[k]) for k in ('kh', 'kw', 'sy', 'sx', 'py', 'px', 'group', 'silu', 'spatial_tile', 'output_chunk'))
             residual = '&'+t(op['residual']) if 'residual' in op else 'nullptr'
             call = f'conv(ctx, {x}, {t(ins[1])}, {t(ins[2])}, {y}, {{{args}}}, engine_weights + {op["packed"]}, {residual})'
             category = 'dwconv' if op['group'] > 1 else 'conv1x1' if op['kh'] == 1 else 'conv3x3s2' if op['sy'] == 2 else 'conv3x3'
@@ -430,6 +439,7 @@ public:
         lines.append(f' ctx.run("{category}", [&] {{ {call}; }}); // {op["name"]}')
         desc = ', '.join(f'{z}:{values[z].shape}' for z in ins)
         buffers = ', '.join(f'{z}=arena[{offsets.get(root(z)[0], -1)+root(z)[1]}]' for z in outs)
+        if kind == 'Conv': plan.append(f'grid {op["name"]}: spatial_tile={op["spatial_tile"]} output_chunk={op["output_chunk"]}')
         plan.append(f'{i:03d} {kind} {op["name"]} ({desc}) -> {[values[z].shape for z in outs]} MACs={op.get("macs", 0)} {buffers}')
     lines += [f' return t_[{ids[model.graph.output[0].name]}].data;', '}', f'double Model::flops() {{ return {macs*2}.0; }}', '}']
     (destination/'model.cpp').write_text('\n'.join(lines)+'\n')

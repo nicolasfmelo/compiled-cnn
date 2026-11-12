@@ -3,6 +3,7 @@
 import importlib.util
 from pathlib import Path
 import sys
+import re
 import tempfile
 import unittest
 import numpy as np
@@ -81,6 +82,10 @@ class SyntheticGraphTests(unittest.TestCase):
     def call(code, name):
         return next(line for line in code.splitlines() if line.endswith('// '+name))
 
+    def activation_flag(self, code):
+        params = re.search(r'\{([0-9, ]+)\}',self.call(code,'A'))
+        return int(params[1].split(',')[7])
+
     def test_residual_future_producer_not_fused(self):
         code = self.compile([self.conv('A'),self.conv('B'),
             helper.make_node('Add',['A','B'],['C'],name='sum')], 'C',[1,3,1,1])
@@ -139,17 +144,17 @@ class SyntheticGraphTests(unittest.TestCase):
                     helper.make_node('Sigmoid',['alias'],['other'],name='other'),
                     helper.make_node('Concat',['act','other'],['C'],axis=1,name='cat')],
                     'C',[1,channels,1,1],constants)
-                self.assertIn(', 0}',self.call(code,'A'))
+                self.assertEqual(0,self.activation_flag(code))
                 self.assertIn('unary(',self.call(code,'sig'))
 
     def test_silu_graph_output_preserved(self):
         code = self.compile([self.conv('A'),*self.activation()],'A',[1,3,1,1])
-        self.assertIn(', 0}',self.call(code,'A'))
+        self.assertEqual(0,self.activation_flag(code))
         self.assertIn('unary(',self.call(code,'sig'))
 
     def test_silu_sole_consumer_fused(self):
         code = self.compile([self.conv('A'),*self.activation()],'act',[1,3,1,1])
-        self.assertIn(', 1}',self.call(code,'A'))
+        self.assertEqual(1,self.activation_flag(code))
         self.assertNotIn('unary(',code)
 
 
