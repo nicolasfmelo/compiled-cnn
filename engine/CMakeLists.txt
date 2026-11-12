@@ -6,7 +6,7 @@ set(ENGINE_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../artifacts/engine/genera
 get_filename_component(ENGINE_GENERATED_DIR "${ENGINE_GENERATED_DIR}" ABSOLUTE)
 add_compile_options(-O3 -march=x86-64-v3 -fno-math-errno -Wall -Wextra -Wpedantic)
 find_package(Threads REQUIRED)
-add_library(engine_runtime runtime/runtime.cpp runtime/avx2.cpp runtime/packed_conv.cpp runtime/transpose.cpp)
+add_library(engine_runtime runtime/runtime.cpp runtime/avx2.cpp runtime/packed_conv.cpp runtime/transpose.cpp runtime/depthwise.cpp)
 target_include_directories(engine_runtime PUBLIC runtime)
 target_link_libraries(engine_runtime PUBLIC Threads::Threads)
 set_source_files_properties("${ENGINE_GENERATED_DIR}/weights.S" PROPERTIES COMPILE_OPTIONS "-Wa,-I${ENGINE_GENERATED_DIR}" OBJECT_DEPENDS "${ENGINE_GENERATED_DIR}/weights.bin")

@@ -4,57 +4,9 @@
 #include <limits>
 
 namespace engine {
-static void depthwise(const Tensor& x, const Tensor& w, const Tensor& b, Tensor& y, ConvParams p, const Tensor* residual) {
-    int ih = x.shape[2], iw = x.shape[3], oh = y.shape[2], ow = y.shape[3];
-    const __m256i indices = _mm256_setr_epi32(0,1,2,3,4,5,6,7);
-    for (int c = 0; c < y.shape[1]; ++c)
-        for (int row = 0; row < oh; ++row) {
-            int col = 0;
-            while (col < ow) {
-                bool vector = col* p.sx >= p.px && (col+7)*p.sx+p.kw-p.px <= iw && col+8 <= ow;
-                if (vector) {
-                    __m256 sum = _mm256_setzero_ps();
-                    for (int ky = 0; ky < p.kh; ++ky) {
-                        int sy = row*p.sy+ky-p.py;
-                        if (sy < 0 || sy >= ih) continue;
-                        for (int kx = 0; kx < p.kw; ++kx) {
-                            const float* src = x.data+(c*ih+sy)*iw+col*p.sx+kx-p.px;
-                            __m256 v = p.sx == 1 ? _mm256_loadu_ps(src) : _mm256_i32gather_ps(src, _mm256_mullo_epi32(indices, _mm256_set1_epi32(p.sx)), 4);
-                            sum = _mm256_fmadd_ps(v, _mm256_set1_ps(w.data[(c*p.kh+ky)*p.kw+kx]), sum);
-                        }
-                    }
-                    float* dst = y.data+(c*oh+row)*ow+col;
-                    sum = _mm256_add_ps(sum, _mm256_set1_ps(b.data[c]));
-                    if (p.silu) sum = silu8(sum);
-                    if (residual) sum = _mm256_add_ps(sum, _mm256_loadu_ps(residual->data+(dst-y.data)));
-                    _mm256_storeu_ps(dst, sum);
-                    col += 8;
-                } else {
-                    float sum = 0;
-                    for (int ky = 0; ky < p.kh; ++ky)
-                        for (int kx = 0; kx < p.kw; ++kx) {
-                            int sy = row*p.sy+ky-p.py, sx = col*p.sx+kx-p.px;
-                            if (sy >= 0 && sy < ih && sx >= 0 && sx < iw)
-                                sum = std::fma(x.data[(c*ih+sy)*iw+sx], w.data[(c*p.kh+ky)*p.kw+kx], sum);
-                        }
-                    sum += b.data[c];
-                    size_t dst = (c*oh+row)*ow+col++;
-                    sum = p.silu ? silu(sum) : sum;
-                    y.data[dst] = residual ? sum+residual->data[dst] : sum;
-                }
-            }
-        }
-}
-
 void conv_opt(Context& ctx, const Tensor& x, const Tensor& w, const Tensor& b, Tensor& y, ConvParams p, const float* packed, const Tensor* residual) {
     if (p.group == x.shape[1] && y.shape[1] == x.shape[1]) {
-        int ih = x.shape[2], iw = x.shape[3], oh = y.shape[2], ow = y.shape[3];
-        ctx.pool.parallel(y.shape[1], [&](size_t c, int) {
-            Tensor xx{x.data+c*ih*iw,{1,1,ih,iw}}, ww{w.data+c*p.kh*p.kw,{1,1,p.kh,p.kw}}, bb{b.data+c,{1}}, yy{y.data+c*oh*ow,{1,1,oh,ow}};
-            Tensor rr{residual ? residual->data+c*oh*ow : nullptr, yy.shape};
-            auto q = p; q.group = 1;
-            depthwise(xx,ww,bb,yy,q,residual ? &rr : nullptr);
-        });
+        conv_depthwise(ctx,x,w,b,y,p,residual);
         return;
     }
     if (p.group != 1) { conv_ref(x,w,b,y,p,residual); return; }

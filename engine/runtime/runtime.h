@@ -65,6 +65,7 @@ inline float sigmoid(float x) {
 }
 inline float silu(float x) { return x * sigmoid(x); }
 void conv_ref(const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams, const Tensor* residual = nullptr);
+void conv_depthwise(Context&, const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams, const Tensor*);
 void conv_dense(Context&, const Tensor&, const Tensor&, Tensor&, ConvParams, const float*, const Tensor*);
 void conv_opt(Context&, const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams, const float*, const Tensor* residual);
 void maxpool_opt(const Tensor&, Tensor&);

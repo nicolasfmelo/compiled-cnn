@@ -68,6 +68,8 @@ int main(int argc, char** argv) {
         convolution(513,13,3,19,3,1,1,true); // full-K > 4608, zero-padded output rows
         for (int kernel : {3,7}) for (int stride : {1,2}) for (bool act : {false,true})
             convolution(5,5,9,37,kernel,stride,5,act);
+        for (int kernel : {3,7}) for (int stride : {1,2}) for (int width : {1,7,16,17,37})
+            convolution(3,3,39,width,kernel,stride,3,true); // channel x row-block jobs and halo tails
         convolution(6,10,5,9,3,2,2,false); // grouped fallback
         std::cout << "PASS conv1x1/3x3 GEMM K/M/N tails, stride/pad, depthwise3x3/7x7, epilogues\n";
         for (int width : {1,7,19,32}) {
