@@ -8,11 +8,13 @@
 a FP32. As 16 depthwise, atenção, operações não Conv da cabeça e ativações
 entre operações continuam em FP32.
 
-**Desempenho: meta ainda não atingida.** Medida rápida final em seis threads:
-**22,84 ms** com perfil, contra **50,19 ms** do FP32 sem perfil, aproximadamente
-**2,20×** de aceleração nesta sequência. Não chegou a <20 ms nem aos 14,91 ms
-do OpenVINO INT8 da rodada 3. O host estava ruidoso, com navegador/chat abertos;
-essas medidas não substituem uma sessão térmica comum.
+**Desempenho (benchmark final, mesma sessão do OpenVINO):** o engine INT8 fez
+**20,94 ms com seis threads (47,8 FPS)**, 2,27× o próprio engine FP32 (47,48 ms).
+O OpenVINO INT8 fez **17,01 ms** na mesma sessão: o engine fica a **1,23×**
+dele (1,31× comparando os ideais estimados pelo p5, 19,78 vs 15,06 ms). A meta
+de <20 ms ficou na fronteira: 20,94 ms medidos com navegador e chat abertos,
+~19,8 ms estimados sem a carga. A acurácia do engine é melhor que a do OpenVINO
+INT8 (queda de 0,26 contra 0,31 ponto de mAP).
 
 O caminho FP32 preserva os cinco arquivos do gerador sem calibração byte a
 byte. Os logs completos de validação FP32, incluindo todos os números, são
@@ -292,24 +294,45 @@ ctest --test-dir engine/build-tsan --output-on-failure
 BENCH_SMOKE=1 BENCH_CONTENDED=1 bash native/bench_engine.sh
 ```
 
-## Benchmark final (controle térmico)
+## Benchmark final (controle térmico, host com carga)
 
-**PLACEHOLDER — A PREENCHER PELO COORDENADOR. Não foi executada a sessão
-completa de três rodadas nesta implementação.**
+`BENCH_CONTENDED=1 bash native/bench_engine.sh` em 2026-11-12: quatro variantes
+na mesma sessão, três rodadas com início rotativo, 60 s de resfriamento antes
+de cada execução, 20 + 200 iterações, seis threads nos P-cores
+(`taskset -c 0,2,4,6,8,10`). OpenVINO FP32 e INT8 exatamente como na rodada 3.
+O navegador e o chat ficaram abertos (não podiam ser fechados): em vez de
+descartar execuções, o modo registra a carga externa, e cada linha traz o
+ideal estimado pelo **p5** (5% iterações mais rápidas) e a margem
+`média/ideal − 1`, como no PBI-097.
 
-O runner agora alterna quatro variantes: `engine-fp32-6t`,
-`engine-int8-6t`, `ov-cpu-fp32`, `ov-cpu-int8`; remove o engine de uma thread.
-Mantém cooldown de 60 s, três rodadas com início rotativo, até cinco retries,
-`BENCH_CONTENDED`, p5/margem e resumo. OpenVINO mantém exatamente 20+200
-iterações, seis P-cores e os parâmetros de `cpu/bench.py`, mesmo no smoke.
-Todas as novas saídas ficam sob `artifacts/engine/bench/`, não em artefatos
-históricos de outras rodadas. O smoke usa uma rodada, cooldown 5 s e 1+5
-iterações somente para as variantes do engine; não é resultado térmico.
+| Variante | Mediana média ms | Ideal (p5) ms | Margem | Mediana p95 ms | FPS | Min/max média ms | CPU externa média |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| engine-fp32-6t | 47,48 | 45,80 | +3,7% | 49,86 | 21,1 | 46,33/50,09 | 33,4% |
+| **engine-int8-6t** | **20,94** | 19,78 | +5,9% | 22,36 | **47,8** | 20,64/22,51 | 39,9% |
+| ov-cpu-fp32 | 43,52 | 41,44 | +5,0% | 49,26 | 23,0 | 43,09/48,62 | 34,1% |
+| ov-cpu-int8 | 17,01 | 15,06 | +12,9% | 20,02 | 58,8 | 15,79/17,02 | 76,3% |
+
+- **INT8 vs FP32 no engine:** 2,27× (47,48 → 20,94 ms). O OpenVINO ganha 2,56×
+  (43,52 → 17,01 ms) com a mesma troca.
+- **Engine vs OpenVINO:** FP32 1,09×, INT8 1,23× (ideais: 1,11× e 1,31×). A
+  diferença cresce no INT8 porque o empacotamento com quantização custa ~25%
+  do tempo do modelo, e o OpenVINO mantém as ativações em INT8 entre camadas.
+- **Método do ideal validado de novo:** o ideal do OpenVINO INT8 (15,06 ms)
+  bate com a mediana da rodada 3 em host ocioso (14,91 ms), e o do OpenVINO
+  FP32 (41,44 ms) com os 40,20 ms de lá.
+- "CPU externa" é a soma do uso dos outros processos (100% = um núcleo); o OV
+  mede dentro do próprio processo, o engine num processo à parte, então serve
+  como ordem de grandeza. Frequência média dos P-cores durante o OV: 3,85–4,13 GHz.
+- Saídas: `artifacts/engine/bench/engine-runs/` e
+  `artifacts/engine/bench/engine-summary.txt`.
 
 ## Limitações e próximos pontos de medição
 
-A meta de latência segue aberta. Não há comparação nova controlada com o
-OpenVINO nem promessa de <20 ms em host ocioso; até o p5 final foi 21,20 ms.
+A meta de <20 ms ficou na fronteira (20,94 ms medidos com carga, ~19,8 ms
+estimados sem ela); falta repetir a sessão em host ocioso. Próximo passo para
+fechar a distância até o OpenVINO INT8 (1,23×): manter ativações em u8 entre
+convoluções consecutivas (quantizar no epílogo do produtor em vez de no pack
+do consumidor), o que elimina a maior parte dos ~25% de pack/quantize.
 O perfil atribui cerca de metade do modelo ao GEMM/epílogo e um quarto ao
 pack/quantize; as categorias de trabalho normalizado não substituem tempos
 de parede por camada. Há repetição de pack entre chunks e ativações FP32
