@@ -25,8 +25,9 @@ void convolution(int ic, int oc, int h, int width, int kernel, int stride, int g
     int pad = kernel/2, oh = (h+2*pad-kernel)/stride+1, ow = (width+2*pad-kernel)/stride+1;
     Buffer x({1,ic,h,width}), w({oc,ic/group,kernel,kernel}), b({oc}), ref({1,oc,oh,ow}), opt({1,oc,oh,ow});
     int k = ic/group*kernel*kernel;
-    std::vector<float> packed((oc+3)/4*k*4, 0);
-    for (int c = 0; c < oc; ++c) for (int z = 0; z < k; ++z) packed[(c/4*k+z)*4+c%4] = w.storage[c*k+z];
+    constexpr int mr=engine::CONV_MR;
+    std::vector<float> packed((oc+mr-1)/mr*k*mr, 0);
+    for (int c = 0; c < oc; ++c) for (int z = 0; z < k; ++z) packed[(c/mr*k+z)*mr+c%mr] = w.storage[c*k+z];
     engine::Context ctx(true,threads,cpus);
     engine::ConvParams p{kernel,kernel,stride,stride,pad,pad,group,activation};
     engine::conv_ref(x.t,w.t,b.t,ref.t,p);

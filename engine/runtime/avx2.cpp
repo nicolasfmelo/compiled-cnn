@@ -4,44 +4,6 @@
 #include <limits>
 
 namespace engine {
-// Four output channels x sixteen spatial positions, eight independent FMA
-// chains. Packed A is [oc/4][K][4], B is a spatial row-major panel. KB=128,
-// NB=64 keep the hot B panel (32 KiB) plus weights/output below 48 KiB L1d;
-// the complete im2col tile is at most 1.125 MiB for this graph, below the
-// P-core's 1.25 MiB L2.
-static void gemm4x16(const float* a, const float* b, float* y, int k,
-                     int bs, int ys, bool first, bool last, const float* bias, bool activation, const float* residual) {
-    __m256 c00 = first ? _mm256_setzero_ps() : _mm256_loadu_ps(y);
-    __m256 c01 = first ? _mm256_setzero_ps() : _mm256_loadu_ps(y+8);
-    __m256 c10 = first ? _mm256_setzero_ps() : _mm256_loadu_ps(y+ys);
-    __m256 c11 = first ? _mm256_setzero_ps() : _mm256_loadu_ps(y+ys+8);
-    __m256 c20 = first ? _mm256_setzero_ps() : _mm256_loadu_ps(y+2*ys);
-    __m256 c21 = first ? _mm256_setzero_ps() : _mm256_loadu_ps(y+2*ys+8);
-    __m256 c30 = first ? _mm256_setzero_ps() : _mm256_loadu_ps(y+3*ys);
-    __m256 c31 = first ? _mm256_setzero_ps() : _mm256_loadu_ps(y+3*ys+8);
-    for (int z = 0; z < k; ++z) {
-        __m256 b0 = _mm256_loadu_ps(b+z*bs), b1 = _mm256_loadu_ps(b+z*bs+8);
-        __m256 a0 = _mm256_broadcast_ss(a+z*4), a1 = _mm256_broadcast_ss(a+z*4+1);
-        __m256 a2 = _mm256_broadcast_ss(a+z*4+2), a3 = _mm256_broadcast_ss(a+z*4+3);
-        c00 = _mm256_fmadd_ps(a0, b0, c00); c01 = _mm256_fmadd_ps(a0, b1, c01);
-        c10 = _mm256_fmadd_ps(a1, b0, c10); c11 = _mm256_fmadd_ps(a1, b1, c11);
-        c20 = _mm256_fmadd_ps(a2, b0, c20); c21 = _mm256_fmadd_ps(a2, b1, c21);
-        c30 = _mm256_fmadd_ps(a3, b0, c30); c31 = _mm256_fmadd_ps(a3, b1, c31);
-    }
-    __m256 rows[4][2] = {{c00,c01},{c10,c11},{c20,c21},{c30,c31}};
-    for (int r = 0; r < 4; ++r) {
-        for (int j = 0; j < 2; ++j) {
-            __m256 v = rows[r][j];
-            if (last) {
-                v = _mm256_add_ps(v, _mm256_set1_ps(bias[r]));
-                if (activation) v = silu8(v);
-                if (residual) v = _mm256_add_ps(v, _mm256_loadu_ps(residual+r*ys+j*8));
-            }
-            _mm256_storeu_ps(y+r*ys+j*8, v);
-        }
-    }
-}
-
 static void depthwise(const Tensor& x, const Tensor& w, const Tensor& b, Tensor& y, ConvParams p, const Tensor* residual) {
     int ih = x.shape[2], iw = x.shape[3], oh = y.shape[2], ow = y.shape[3];
     const __m256i indices = _mm256_setr_epi32(0,1,2,3,4,5,6,7);
@@ -96,50 +58,7 @@ void conv_opt(Context& ctx, const Tensor& x, const Tensor& w, const Tensor& b, T
         return;
     }
     if (p.group != 1) { conv_ref(x,w,b,y,p,residual); return; }
-    int ic = x.shape[1], ih = x.shape[2], iw = x.shape[3];
-    int oc = y.shape[1], oh = y.shape[2], ow = y.shape[3], n = oh*ow, k = ic*p.kh*p.kw;
-    constexpr int nb = 64, kb = 128;
-    if (ctx.scratch[0].size() < static_cast<size_t>(k*nb)) throw std::runtime_error("im2col scratch too small");
-    bool direct = p.kh == 1 && p.kw == 1 && p.sy == 1 && p.sx == 1 && p.py == 0 && p.px == 0 && ih == oh && iw == ow;
-    ctx.pool.parallel((n+nb-1)/nb, [&](size_t job, int worker) {
-        int pos = static_cast<int>(job)*nb;
-        float* scratch = ctx.scratch[worker].data();
-        int count = std::min(nb, n-pos), bs = direct ? n : nb;
-        const float* panel = direct ? x.data+pos : scratch;
-        if (!direct) {
-            int base_y[nb], base_x[nb];
-            for (int j = 0; j < count; ++j) { base_y[j] = (pos+j)/ow*p.sy-p.py; base_x[j] = (pos+j)%ow*p.sx-p.px; }
-            for (int c = 0; c < ic; ++c)
-                for (int ky = 0; ky < p.kh; ++ky)
-                    for (int kx = 0; kx < p.kw; ++kx) {
-                        float* row = scratch+((c*p.kh+ky)*p.kw+kx)*nb;
-                        for (int j = 0; j < count; ++j) {
-                            int sy = base_y[j]+ky, sx = base_x[j]+kx;
-                            row[j] = sy >= 0 && sy < ih && sx >= 0 && sx < iw ? x.data[(c*ih+sy)*iw+sx] : 0;
-                        }
-                    }
-        }
-        for (int z = 0; z < k; z += kb) {
-            int kc = std::min(kb, k-z);
-            for (int o = 0; o < oc; o += 4) {
-                int j = 0;
-                if (o+4 <= oc) for (; j+16 <= count; j += 16)
-                    gemm4x16(packed+(o/4*k+z)*4, panel+z*bs+j, y.data+o*n+pos+j,
-                              kc, bs, n, z == 0, z+kc == k, b.data+o, p.silu, residual ? residual->data+o*n+pos+j : nullptr);
-                for (int r = o; r < std::min(o+4, oc); ++r)
-                    for (int col = j; col < count; ++col) {
-                        float sum = z == 0 ? 0 : y.data[r*n+pos+col];
-                        for (int t = 0; t < kc; ++t)
-                            sum = std::fma(packed[(o/4*k+z+t)*4+r-o], panel[(z+t)*bs+col], sum);
-                        if (z+kc == k) {
-                            sum += b.data[r]; if (p.silu) sum = silu(sum);
-                            if (residual) sum += residual->data[r*n+pos+col];
-                        }
-                        y.data[r*n+pos+col] = sum;
-                    }
-            }
-        }
-    });
+    conv_dense(ctx,x,b,y,p,packed,residual);
 }
 void maxpool_opt(const Tensor& x, Tensor& y) {
     int h = x.shape[2], w = x.shape[3];

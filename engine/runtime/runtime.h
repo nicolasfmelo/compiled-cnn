@@ -53,6 +53,7 @@ struct Context {
         profile[kind] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now()-t).count();
     }
 };
+inline constexpr int CONV_MR = 6;
 struct ConvParams { int kh, kw, sy, sx, py, px, group, silu; };
 inline float sigmoid(float x) {
     // Branching avoids overflow and preserves subnormal sigmoid(-100).
@@ -61,6 +62,7 @@ inline float sigmoid(float x) {
 }
 inline float silu(float x) { return x * sigmoid(x); }
 void conv_ref(const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams, const Tensor* residual = nullptr);
+void conv_dense(Context&, const Tensor&, const Tensor&, Tensor&, ConvParams, const float*, const Tensor*);
 void conv_opt(Context&, const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams, const float*, const Tensor* residual);
 void maxpool_opt(const Tensor&, Tensor&);
 void resize_opt(const Tensor&, Tensor&);

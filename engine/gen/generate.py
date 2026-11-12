@@ -355,14 +355,15 @@ def compile_graph(source, destination, stage):
     for name in names:
         r, _ = root(name)
         if values[r].constant is not None: pack(r, values[r].constant)
-    # M2 packs four output-channel rows together, with K major order; the
-    # optimized spatial-vector microkernel broadcasts these four weights.
+    # M5 packs six output rows, K major, with zero-padded channel tails.
+    # Must match runtime CONV_MR; no inference-time weight packing.
+    mr = 6
     for op in ops:
         if op['kind'] == 'Conv':
             w = const(op['inputs'][1]).reshape(values[op['inputs'][1]].shape[0], -1)
             oc, k = w.shape
-            packed = np.zeros(((oc+3)//4, k, 4), np.float32)
-            for c in range(oc): packed[c//4, :, c%4] = w[c]
+            packed = np.zeros(((oc+mr-1)//mr, k, mr), np.float32)
+            for c in range(oc): packed[c//mr, :, c%mr] = w[c]
             op['packed'] = pack(op['name']+'/packed', packed)
     (destination/'weights.bin').write_bytes(blob)
     (destination/'weights.S').write_text('.section .rodata\n.balign 64\n.global engine_weights\n.hidden engine_weights\nengine_weights:\n.incbin "weights.bin"\n.section .note.GNU-stack,"",@progbits\n')
@@ -440,7 +441,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--input', type=Path, default=ROOT/'artifacts/engine/yolov10s_raw.onnx')
     p.add_argument('--output', type=Path, default=ROOT/'artifacts/engine/generated')
-    p.add_argument('--stage', type=int, choices=(1, 2, 3, 4), default=4)
+    p.add_argument('--stage', type=int, choices=(1, 2, 3, 4, 5), default=5)
     args = p.parse_args()
     try:
         compile_graph(args.input, args.output, args.stage)
