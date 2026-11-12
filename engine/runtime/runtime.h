@@ -32,6 +32,7 @@ public:
 struct Context {
     bool optimized, profiling = false;
     std::map<std::string, double> profile;
+    std::vector<float> scratch = std::vector<float>(512*9*64);
     Context(bool opt, int threads, const std::vector<int>& cpus) : optimized(opt) {
         (void)cpus;
         if (threads != 1) throw std::runtime_error("this milestone supports one thread only");
@@ -51,6 +52,10 @@ inline float sigmoid(float x) {
 }
 inline float silu(float x) { return x * sigmoid(x); }
 void conv_ref(const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams);
+void conv_opt(Context&, const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams, const float*);
+void maxpool_opt(const Tensor&, Tensor&);
+void resize_opt(const Tensor&, Tensor&);
+void matmul_opt(const Tensor&, const Tensor&, Tensor&);
 void conv(Context&, const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams, const float*);
 void unary(Context&, const Tensor&, Tensor&, int);
 void binary(Context&, const Tensor&, const Tensor&, Tensor&, int);

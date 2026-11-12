@@ -392,7 +392,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--input', type=Path, default=ROOT/'artifacts/engine/yolov10s_raw.onnx')
     p.add_argument('--output', type=Path, default=ROOT/'artifacts/engine/generated')
-    p.add_argument('--stage', type=int, choices=(1, 2, 3, 4), default=1)
+    p.add_argument('--stage', type=int, choices=(1, 2, 3, 4), default=2)
     args = p.parse_args()
     try:
         compile_graph(args.input, args.output, args.stage)

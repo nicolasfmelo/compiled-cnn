@@ -21,8 +21,9 @@ void conv_ref(const Tensor& x, const Tensor& w, const Tensor& b, Tensor& y, Conv
                 y.data[(o*oh+h)*ow+col] = p.silu ? silu(sum) : sum;
             }
 }
-void conv(Context&, const Tensor& x, const Tensor& w, const Tensor& b, Tensor& y, ConvParams p, const float*) {
-    conv_ref(x, w, b, y, p);
+void conv(Context& ctx, const Tensor& x, const Tensor& w, const Tensor& b, Tensor& y, ConvParams p, const float* packed) {
+    if (ctx.optimized) conv_opt(ctx, x, w, b, y, p, packed);
+    else conv_ref(x, w, b, y, p);
 }
 void unary(Context&, const Tensor& x, Tensor& y, int activation) {
     for (size_t i = 0; i < x.size(); ++i) y.data[i] = activation ? silu(x.data[i]) : sigmoid(x.data[i]);
@@ -32,7 +33,15 @@ static std::vector<size_t> strides(const std::vector<int>& shape) {
     for (int i = static_cast<int>(shape.size())-2; i >= 0; --i) result[i] = result[i+1]*shape[i+1];
     return result;
 }
-void binary(Context&, const Tensor& a, const Tensor& b, Tensor& y, int op) {
+void binary(Context& ctx, const Tensor& a, const Tensor& b, Tensor& y, int op) {
+    if (ctx.optimized && (a.size() == y.size() || a.size() == 1) && (b.size() == y.size() || b.size() == 1)) {
+        const bool sa = a.size() == 1, sb = b.size() == 1;
+        for (size_t i = 0; i < y.size(); ++i) {
+            float l = a.data[sa ? 0 : i], r = b.data[sb ? 0 : i];
+            y.data[i] = op == 0 ? l+r : op == 1 ? l-r : op == 2 ? l*r : l/r;
+        }
+        return;
+    }
     auto as = strides(a.shape), bs = strides(b.shape), ys = strides(y.shape);
     size_t rank = y.shape.size(), da = rank-a.shape.size(), db = rank-b.shape.size();
     for (size_t i = 0; i < y.size(); ++i) {
@@ -46,7 +55,8 @@ void binary(Context&, const Tensor& a, const Tensor& b, Tensor& y, int op) {
         y.data[i] = op == 0 ? l+r : op == 1 ? l-r : op == 2 ? l*r : l/r;
     }
 }
-void maxpool(Context&, const Tensor& x, Tensor& y) {
+void maxpool(Context& ctx, const Tensor& x, Tensor& y) {
+    if (ctx.optimized) { maxpool_opt(x, y); return; }
     int c = x.shape[1], h = x.shape[2], w = x.shape[3];
     for (int ch = 0; ch < c; ++ch)
         for (int row = 0; row < h; ++row)
@@ -59,7 +69,8 @@ void maxpool(Context&, const Tensor& x, Tensor& y) {
                 y.data[(ch*h+row)*w+col] = v;
             }
 }
-void resize(Context&, const Tensor& x, Tensor& y) {
+void resize(Context& ctx, const Tensor& x, Tensor& y) {
+    if (ctx.optimized) { resize_opt(x, y); return; }
     int h = x.shape[2], w = x.shape[3];
     for (int c = 0; c < x.shape[1]; ++c)
         for (int row = 0; row < h*2; ++row)
@@ -99,7 +110,8 @@ void transpose(Context&, const Tensor& x, Tensor& y, std::initializer_list<int> 
         y.data[i] = x.data[src];
     }
 }
-void matmul(Context&, const Tensor& a, const Tensor& b, Tensor& y) {
+void matmul(Context& ctx, const Tensor& a, const Tensor& b, Tensor& y) {
+    if (ctx.optimized) { matmul_opt(a, b, y); return; }
     int m = a.shape[2], k = a.shape[3], n = b.shape[3];
     int batches = a.shape[0]*a.shape[1];
     for (int batch = 0; batch < batches; ++batch)
