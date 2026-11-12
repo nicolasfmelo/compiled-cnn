@@ -11,7 +11,7 @@ This repository answers that for **YOLOv10s** (Ultralytics) on one laptop, acros
 | 2 | **TensorRT 11.4** (ONNX → `.plan` engine, C++ without libtorch) | NVIDIA GPU |
 | 3 | PyTorch eager, **ONNX Runtime**, **OpenVINO** FP32 and **INT8** (NNCF, AVX-VNNI) | CPU |
 | 4 | **ncnn** over **Vulkan** (vendor-neutral GPU) and ncnn on CPU | NVIDIA GPU, Intel iGPU, CPU |
-| Engine | **Own C++ engine** generated from the ONNX graph: AVX2/FMA kernels, no inference library, no BLAS | CPU |
+| Engine | **Own C++ engine** generated from the ONNX graph: AVX2/FMA kernels and INT8 with AVX-VNNI, own calibration, no inference library, no BLAS | CPU |
 
 Every backend is validated against the same fixed PyTorch reference with fixed tolerances, and benchmarked with the same protocol. Full write-ups (in Portuguese) are in [`docs/report/`](docs/report/) and in the per-round technical reports in [`docs/`](docs/).
 
@@ -39,12 +39,13 @@ Latency of one forward pass, batch 1, static 640×640 input, input already in de
 | OpenVINO | FP32 | 40.20 ms | 24.9 | 70% | 8/8 |
 | **Own engine (C++, generated)** ³ | FP32 | **46.67 ms** (ideal ≈ 45.4) | 21.4 | 58% ⁴ | 8/8 |
 | **OpenVINO** | **INT8** | **14.91 ms** | **67.1** | — | 8/8, mAP −0.31 pt ² |
+| Own engine (C++, generated) ³ | INT8 | 20.94 ms (ideal ≈ 19.8) | 47.8 | — | 8/8, mAP −0.26 pt |
 
 **Intel UHD Graphics (iGPU), ncnn Vulkan:** ~230 ms FP16, ~433 ms FP32 (one uncontrolled round; the benchmark was stopped on purpose because the device is far too slow for this model).
 
 ¹ The default TensorRT FP32 engine allows TF32 and misses the score tolerance on 1 of 8 images (0.0022 vs 0.001, same box and class). Built with `--noTF32` it matches the strict-FP32 reference almost bit for bit.
 ² mAP50-95 on 500 COCO val2017 images: 49.33 (FP32) → 49.02 (INT8). Calibration used 300 different val images.
-³ Measured with a browser and a chat app running (they could not be closed). In the same session OpenVINO FP32 measured 43.71 ms, so the engine is **1.07× slower than OpenVINO** under equal conditions. "Ideal" is the p5 latency (fastest 5% of iterations), an estimate of the uncontended latency; OpenVINO's estimate (40.78 ms) agrees with its idle-host 40.20 ms. One thread: 215.81 ms.
+³ Measured with a browser and a chat app running (they could not be closed), with OpenVINO in the same session: FP32 engine 46.67 ms vs OpenVINO 43.71 ms (**1.07×**); in the INT8 session, INT8 engine 20.94 ms vs OpenVINO INT8 17.01 ms (**1.23×**). "Ideal" is the p5 latency (fastest 5% of iterations), an estimate of the uncontended latency; OpenVINO's estimates (40.78 / 15.06 ms) agree with its idle-host 40.20 / 14.91 ms. FP32 engine on one thread: 215.81 ms.
 ⁴ Against the fixed 800 GFLOPS assumption (6 × 32 FLOP/cycle × 4.2 GHz), not the measured clock.
 
 Notes on the numbers:
@@ -56,7 +57,8 @@ Notes on the numbers:
 - AOTInductor removes Python but not libtorch; good middle ground with a light build.
 - Vulkan is portable but far behind CUDA on this NVIDIA GPU, even with tensor cores via cooperative matrix.
 - On this CPU, FP16 does not help (no AVX-512 FP16 / AMX). INT8 with AVX-VNNI is the big lever: 2.7× over OpenVINO FP32 for 0.31 mAP.
-- OpenVINO FP32 already reaches ~70% of the theoretical FP32 peak. A hand-written engine, generated from the ONNX graph with AVX2 kernels and its own thread pool, got to ~93% of OpenVINO's speed (46.67 vs 43.71 ms in the same session), ahead of PyTorch eager, ncnn and close to ONNX Runtime. Almost all of the remaining time is in dense convolutions.
+- OpenVINO FP32 already reaches ~70% of the theoretical FP32 peak. A hand-written engine, generated from the ONNX graph with AVX2 kernels and its own thread pool, got to ~93% of OpenVINO's speed (46.67 vs 43.71 ms in the same session), ahead of PyTorch eager, ncnn and close to ONNX Runtime.
+- The same engine in INT8 (AVX-VNNI `vpdpbusd`, our own per-channel quantization and calibration) runs at 20.94 ms, 2.27× its FP32 path and 1.23× OpenVINO INT8, with a smaller accuracy loss (−0.26 vs −0.31 mAP points). Activations stay FP32 between layers and are quantized while packing, which costs ~25% of the INT8 time.
 
 ## Hardware
 
@@ -149,7 +151,10 @@ uv run python engine/export_raw_onnx.py            # ONNX cut before the top-300
 uv run python engine/gen/generate.py               # generates model.cpp + embedded weights
 cmake -S engine -B engine/build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build engine/build
 taskset -c 0,2,4,6,8,10 engine/build/yolo_engine validate artifacts/ref --threads 6
-bash native/bench_engine.sh                         # engine 6t/1t vs OpenVINO; BENCH_CONTENDED=1 on a busy host
+uv run python engine/quant/calibrate.py            # INT8 calibration on 300 COCO images (needs cpu/download_coco.sh)
+uv run python engine/gen/generate.py --calibration artifacts/engine/int8/calibration.json --int8-method p99999
+cmake --build engine/build && uv run python engine/validate_int8.py && uv run python engine/eval_map.py
+bash native/bench_engine.sh                         # engine FP32/INT8 vs OpenVINO FP32/INT8; BENCH_CONTENDED=1 on a busy host
 ```
 
 ## How results are validated
@@ -168,7 +173,7 @@ bash native/bench_engine.sh                         # engine 6t/1t vs OpenVINO; 
 
 ## Next step
 
-INT8 in the own engine with AVX-VNNI (target: close to OpenVINO INT8's 14.9 ms), and on the FP32 side, direct convolutions in a blocked layout (NCHWc8) to close the remaining ~7% to OpenVINO.
+Keep activations in u8 between consecutive INT8 convolutions (quantize in the producer's epilogue instead of the consumer's pack) to close most of the 1.23× gap to OpenVINO INT8; on the FP32 side, direct convolutions in a blocked layout (NCHWc8).
 
 ## Licenses
 

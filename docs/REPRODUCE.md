@@ -194,12 +194,25 @@ ldd $B
 
 Unlike the other export scripts, `engine/export_raw_onnx.py` and `engine/gen/generate.py` have a real CLI (`--help` is safe). The top-300 selection runs in C++ (`native/postprocess.h`, shared with the ncnn runner, bit-exact with the Python implementation). Expected: all three `validate` runs 8/8 PASS; `detect` PASS; two generator runs produce identical files.
 
-Benchmark (engine 6 threads, engine 1 thread and OpenVINO FP32 in the same session, 3 rotating rounds, ~15 min):
+INT8 path (PBI-098; needs the COCO download from section 6). Dense convolutions run in INT8 with AVX-VNNI; weights are symmetric per output channel, activations asymmetric per tensor, calibrated on val2017 ranks 501–800:
+
+```bash
+uv run python engine/quant/calibrate.py     # artifacts/engine/int8/calibration.json (deterministic, ~1 min)
+uv run python engine/gen/generate.py --calibration artifacts/engine/int8/calibration.json --int8-method p99999
+cmake --build engine/build
+uv run python engine/validate_int8.py       # round-3 INT8 criterion via `yolo_engine serve`; expect 8/8
+uv run python engine/eval_map.py            # mAP on the 500 evaluation images: fp32 49.33, int8 49.07, drop 0.26
+taskset -c 0,2,4,6,8,10 engine/build/yolo_engine bench --precision int8 --threads 6 --profile
+```
+
+Without `--calibration` the generator emits the FP32-only model, byte-identical to the PBI-097 output. `--int8-method minmax` reproduces the first attempt (fails the INT8 criterion on 2 images); `--fp32-layers` keeps named convolutions in FP32. `--precision int8` fails with a clear error on CPUs without AVX-VNNI.
+
+Benchmark (engine FP32 and INT8 with 6 threads, OpenVINO FP32 and INT8, same session, 3 rotating rounds, ~20 min):
 
 ```bash
 bash native/bench_engine.sh                     # idle host: runs with external load are discarded and retried
 BENCH_CONTENDED=1 bash native/bench_engine.sh   # busy host: records external load instead of discarding
-cat artifacts/bench/engine-summary.txt
+cat artifacts/engine/bench/engine-summary.txt
 ```
 
 The summary includes an "ideal" estimate (median p5 latency, i.e. the fastest 5% of iterations) and the margin of the mean over it, which matters when the host cannot be idled. Build processes still discard a run in both modes. `BENCH_SMOKE=1` does a one-round parse check.
