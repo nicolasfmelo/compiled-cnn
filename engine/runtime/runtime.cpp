@@ -166,11 +166,10 @@ void transpose(Context& ctx, const Tensor& x, Tensor& y, std::initializer_list<i
 }
 void matmul(Context& ctx, const Tensor& a, const Tensor& b, Tensor& y) {
     if (ctx.optimized) {
-        int m = a.shape[2], k = a.shape[3], n = b.shape[3];
-        ctx.pool.parallel(a.shape[0]*a.shape[1]*m, [&](size_t row, int) {
-            size_t batch = row/m;
-            Tensor aa{a.data+row*k,{1,1,1,k}}, bb{b.data+batch*k*n,{1,1,k,n}}, yy{y.data+row*n,{1,1,1,n}};
-            matmul_opt(aa,bb,yy);
+        const int m=a.shape[2],tiles=(m+3)/4;
+        ctx.pool.parallel(a.shape[0]*a.shape[1]*tiles,[&](size_t job,int) {
+            int row=static_cast<int>(job%tiles)*4,batch=static_cast<int>(job/tiles);
+            matmul_tile(a,b,y,batch,row,std::min(4,m-row));
         });
         return;
     }

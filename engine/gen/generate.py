@@ -107,14 +107,16 @@ def compile_graph(source, destination, stage):
                 ins.append(name)
             params['macs'] = oc*oh*ow*ic*kh*kw
             k = ic*kh*kw
-            tile = 32 if k > 2048 else 64
+            tile = 16
             spatial_jobs = (oh*ow+tile-1)//tile
             splits = max(1, (24+spatial_jobs-1)//spatial_jobs)
             chunk = ((oc+splits-1)//splits+5)//6*6
             # Full B tile plus the learned-weight slice below 1 MiB, leaving
             # 256 KiB of L2 for output/metadata and other activity.
             cache_rows = max(6, ((1024*1024//(4*k)-tile)//6)*6)
-            params.update(spatial_tile=tile, output_chunk=min(chunk, cache_rows))
+            groups = (oc+min(chunk,cache_rows)-1)//min(chunk,cache_rows)
+            chunk = ((oc+groups-1)//groups+5)//6*6
+            params.update(spatial_tile=tile, output_chunk=chunk)
         elif kind == 'Sigmoid':
             out_shapes = [shapes[0]]
         elif kind == 'MaxPool':

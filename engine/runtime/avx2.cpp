@@ -9,7 +9,7 @@ void conv_opt(Context& ctx, const Tensor& x, const Tensor& w, const Tensor& b, T
         conv_depthwise(ctx,x,w,b,y,p,residual);
         return;
     }
-    if (p.group != 1) { conv_ref(x,w,b,y,p,residual); return; }
+    if (p.group != 1 || p.kh*p.kw>9) { conv_ref(x,w,b,y,p,residual); return; }
     conv_dense(ctx,x,b,y,p,packed,residual);
 }
 void maxpool_opt(const Tensor& x, Tensor& y) {
@@ -99,22 +99,42 @@ void softmax_opt(Context& ctx, const Tensor& x, Tensor& y, int axis) {
         }
     });
 }
-void matmul_opt(const Tensor& a, const Tensor& b, Tensor& y) {
-    int m = a.shape[2], k = a.shape[3], n = b.shape[3];
-    for (int batch = 0; batch < a.shape[0]*a.shape[1]; ++batch)
-        for (int i = 0; i < m; ++i) {
-            int j = 0;
-            for (; j+8 <= n; j += 8) {
-                __m256 sum = _mm256_setzero_ps();
-                for (int z = 0; z < k; ++z)
-                    sum = _mm256_fmadd_ps(_mm256_set1_ps(a.data[(batch*m+i)*k+z]), _mm256_loadu_ps(b.data+(batch*k+z)*n+j), sum);
-                _mm256_storeu_ps(y.data+(batch*m+i)*n+j, sum);
-            }
-            for (; j < n; ++j) {
-                float sum = 0;
-                for (int z = 0; z < k; ++z) sum = std::fma(a.data[(batch*m+i)*k+z], b.data[(batch*k+z)*n+j], sum);
-                y.data[(batch*m+i)*n+j] = sum;
-            }
+void matmul_tile(const Tensor& a,const Tensor& b,Tensor& y,int batch,int row,int rows) {
+    const int m=a.shape[2],k=a.shape[3],n=b.shape[3];
+    const float* aa=a.data+(batch*m+row)*k;
+    const float* bb=b.data+batch*k*n;
+    float* out=y.data+(batch*m+row)*n;
+    int j=0;
+    if (rows==4) for (; j+16<=n; j+=16) {
+        __m256 c00=_mm256_setzero_ps(),c01=c00,c10=c00,c11=c00,c20=c00,c21=c00,c30=c00,c31=c00;
+        for (int z=0; z<k; ++z) {
+            __m256 b0=_mm256_loadu_ps(bb+z*n+j),b1=_mm256_loadu_ps(bb+z*n+j+8);
+            __m256 av=_mm256_set1_ps(aa[z]);
+            c00=_mm256_fmadd_ps(av,b0,c00); c01=_mm256_fmadd_ps(av,b1,c01);
+            av=_mm256_set1_ps(aa[k+z]);
+            c10=_mm256_fmadd_ps(av,b0,c10); c11=_mm256_fmadd_ps(av,b1,c11);
+            av=_mm256_set1_ps(aa[2*k+z]);
+            c20=_mm256_fmadd_ps(av,b0,c20); c21=_mm256_fmadd_ps(av,b1,c21);
+            av=_mm256_set1_ps(aa[3*k+z]);
+            c30=_mm256_fmadd_ps(av,b0,c30); c31=_mm256_fmadd_ps(av,b1,c31);
         }
+        _mm256_storeu_ps(out+j,c00); _mm256_storeu_ps(out+j+8,c01);
+        _mm256_storeu_ps(out+n+j,c10); _mm256_storeu_ps(out+n+j+8,c11);
+        _mm256_storeu_ps(out+2*n+j,c20); _mm256_storeu_ps(out+2*n+j+8,c21);
+        _mm256_storeu_ps(out+3*n+j,c30); _mm256_storeu_ps(out+3*n+j+8,c31);
+    }
+    for (int r=0; r<rows; ++r) {
+        int col=j;
+        for (; col+8<=n; col+=8) {
+            __m256 sum=_mm256_setzero_ps();
+            for (int z=0; z<k; ++z) sum=_mm256_fmadd_ps(_mm256_set1_ps(aa[r*k+z]),_mm256_loadu_ps(bb+z*n+col),sum);
+            _mm256_storeu_ps(out+r*n+col,sum);
+        }
+        for (; col<n; ++col) {
+            float sum=0;
+            for (int z=0; z<k; ++z) sum=std::fma(aa[r*k+z],bb[z*n+col],sum);
+            out[r*n+col]=sum;
+        }
+    }
 }
 }

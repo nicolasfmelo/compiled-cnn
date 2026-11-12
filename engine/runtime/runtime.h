@@ -70,7 +70,7 @@ void conv_dense(Context&, const Tensor&, const Tensor&, Tensor&, ConvParams, con
 void conv_opt(Context&, const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams, const float*, const Tensor* residual);
 void maxpool_opt(const Tensor&, Tensor&);
 void resize_opt(const Tensor&, Tensor&);
-void matmul_opt(const Tensor&, const Tensor&, Tensor&);
+void matmul_tile(const Tensor&, const Tensor&, Tensor&, int batch, int row, int rows);
 void conv(Context&, const Tensor&, const Tensor&, const Tensor&, Tensor&, ConvParams, const float*, const Tensor* residual = nullptr);
 void unary_opt(const Tensor&, Tensor&, int);
 void softmax_opt(Context&, const Tensor&, Tensor&, int);

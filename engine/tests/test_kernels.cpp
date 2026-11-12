@@ -55,6 +55,17 @@ int main(int argc, char** argv) {
         }
         std::cout << "exp8 [-88,88] max relative error=" << max_relative << '\n';
         if (max_relative > 2e-7) throw std::runtime_error("exp8 relative error > 2e-7");
+        double silu_relative=0;
+        for (int i=0; i<=200000; i+=8) {
+            for (int j=0; j<8; ++j) xs[j]=-100.f+200.f*std::min(i+j,200000)/200000.f;
+            _mm256_store_ps(ys,engine::silu8(_mm256_load_ps(xs)));
+            for (int j=0; j<8; ++j) {
+                double expected=xs[j]/(1+std::exp(-static_cast<double>(xs[j])));
+                if (std::abs(expected)>1e-30) silu_relative=std::max(silu_relative,std::abs(ys[j]/expected-1));
+                if (std::abs(ys[j]-engine::silu(xs[j]))>4e-7*(1+std::abs(expected))) throw std::runtime_error("silu8 dense range mismatch");
+            }
+        }
+        std::cout << "silu8 [-100,100] max relative error (normal magnitude)=" << silu_relative << '\n';
         for (int j = 0; j < 8; ++j) xs[j] = j%2 ? -1000.f : -100.f;
         _mm256_store_ps(ys,engine::silu8(_mm256_load_ps(xs)));
         for (int j = 0; j < 8; ++j) if (!std::isfinite(ys[j]) || !std::signbit(ys[j])) throw std::runtime_error("silu8 extreme");
