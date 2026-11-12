@@ -3,24 +3,25 @@
 #include <sched.h>
 
 struct Arguments {
-    std::string command, impl = "opt", cpus;
+    std::string command, impl = "opt", precision = "fp32", cpus;
     fs::path extra;
     std::optional<fs::path> check;
     int threads = 1, warmup = 20, iters = 200;
     bool profile = false;
     Arguments(int argc, char** argv) {
-        if (argc < 2) throw std::runtime_error("usage: yolo_engine validate REF_DIR | bench | detect IMAGE [--impl ref|opt] [--threads N] [--cpus LIST] [--warmup 20] [--iters 200] [--profile] [--check DETS_TXT]");
+        if (argc < 2) throw std::runtime_error("usage: yolo_engine validate REF_DIR | bench | detect IMAGE | serve [--precision fp32|int8] [--impl ref|opt] [--threads N] [--cpus LIST] [--warmup 20] [--iters 200] [--profile] [--check DETS_TXT]");
         command = argv[1];
         int i = 2;
         if (command == "validate" || command == "detect") {
             if (i == argc) throw std::runtime_error("missing path");
             extra = argv[i++];
-        } else if (command != "bench") throw std::runtime_error("unknown command");
+        } else if (command != "bench" && command != "serve") throw std::runtime_error("unknown command");
         for (; i < argc; ++i) {
             std::string key = argv[i];
             if (key == "--profile") { profile = true; continue; }
             if (++i == argc) throw std::runtime_error("missing option value");
             if (key == "--impl") impl = argv[i];
+            else if (key == "--precision") precision = argv[i];
             else if (key == "--threads") threads = std::stoi(argv[i]);
             else if (key == "--cpus") cpus = argv[i];
             else if (key == "--warmup") warmup = std::stoi(argv[i]);
@@ -30,6 +31,15 @@ struct Arguments {
         }
         if ((impl != "ref" && impl != "opt") || threads < 1 || threads > 16 || warmup < 0 || iters < 1 || (impl == "ref" && threads != 1))
             throw std::runtime_error("invalid implementation/threads/iteration count");
+        if (precision != "fp32" && precision != "int8") throw std::runtime_error("precision must be fp32 or int8");
+        if (precision == "int8") {
+#ifndef ENGINE_HAS_INT8
+            throw std::runtime_error("model has no INT8 weights: regenerate with --calibration");
+#endif
+            if (!engine::has_avx_vnni()) throw std::runtime_error("INT8 requires AVX-VNNI (AVX-512 is not required)");
+            if (impl != "opt") throw std::runtime_error("INT8 requires --impl opt; integer reference is available in unit tests");
+            if (command == "validate") throw std::runtime_error("INT8 validation: run uv run python engine/validate_int8.py (round-3 criterion)");
+        }
         if (cpus.empty()) {
             for (int t = 0; t < threads; ++t) cpus += (t ? "," : "") + std::to_string(t*2);
         }
@@ -55,6 +65,7 @@ int main(int argc, char** argv) {
         Arguments args(argc, argv);
         auto start = Clock::now();
         engine::Model model(args.impl == "opt", args.threads, args.cpu_list());
+        model.ctx.int8 = args.precision == "int8";
         double load = milliseconds(start), model_ms = 0, post_ms = 0;
         auto infer = [&](const std::vector<float>& input) {
             auto t = Clock::now();
@@ -65,6 +76,24 @@ int main(int argc, char** argv) {
             post_ms = milliseconds(t);
             return output;
         };
+        if (args.command == "serve") {
+            // No text on stdout: exactly one little-endian [300,6] record per
+            // complete little-endian [3,640,640] input; truncated EOF is an error.
+            std::ios::sync_with_stdio(false);
+            std::vector<float> input(INPUT_SIZE);
+            const auto bytes=static_cast<std::streamsize>(input.size()*sizeof(float));
+            for (;;) {
+                std::cin.read(reinterpret_cast<char*>(input.data()),bytes);
+                if (std::cin.gcount()==0 && std::cin.eof()) return 0;
+                if (std::cin.gcount()!=bytes) throw std::runtime_error("truncated serve input");
+                if (!std::all_of(input.begin(),input.end(),[](float v) { return std::isfinite(v); }))
+                    throw std::runtime_error("non-finite serve input");
+                auto output=infer(input);
+                std::cout.write(reinterpret_cast<const char*>(output.data()),output.size()*sizeof(float));
+                std::cout.flush();
+                if (!std::cout) throw std::runtime_error("serve output pipe failed");
+            }
+        }
         if (args.command == "validate") {
             auto bus = args.extra / "bus.input.bin";
             if (fs::exists(bus) && fs::exists("artifacts/ncnn/bus.raw.bin")) {
@@ -78,7 +107,7 @@ int main(int argc, char** argv) {
             return validate(infer, false, args.extra);
         }
         if (args.command == "detect") return detect(infer, false, args.extra, args.check);
-        std::cout << "variant: engine fp32 impl=" << args.impl << " threads=" << args.threads << " cpus=" << args.cpus << '\n';
+        std::cout << "variant: engine " << args.precision << " impl=" << args.impl << " threads=" << args.threads << " cpus=" << args.cpus << '\n';
         auto input = read_binary("artifacts/ref/bus.input.bin", INPUT_SIZE);
         auto iteration = [&] { auto t = Clock::now(); infer(input); return milliseconds(t); };
         double first = iteration();
@@ -102,7 +131,7 @@ int main(int argc, char** argv) {
                   << "\neffective GFLOPS: " << gflops << " (" << gflops/8 << "% of 800 GFLOPS peak)\n";
         if (args.profile) {
             std::cout << "profile kind | ms | % model\n";
-            for (const char* kind : {"conv3x3", "conv3x3s2", "conv1x1", "dwconv", "maxpool", "resize", "attention", "concat/copy", "head", "other"}) {
+            for (const char* kind : {"conv3x3", "conv3x3s2", "conv1x1", "dwconv", "maxpool", "resize", "attention", "concat/copy", "head", "other", "int8_pack_quantize", "int8_gemm_epilogue"}) {
                 double ms = model.ctx.profile[kind]/args.iters;
                 std::cout << kind << " | " << ms << " | " << ms/(model_total/args.iters)*100 << '\n';
             }
