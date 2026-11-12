@@ -409,9 +409,9 @@ Na raiz da worktree, origem de artefatos **somente leitura**. Não executar
 `aoti/export.py` nem regenerar `artifacts/ref`.
 
 ```bash
-mkdir -p artifacts
-cp -r /home/nicolas/Projects/experimentos/compiled-cnn/artifacts/{data,ref,yolov10s_fp32.onnx} artifacts/
-cp /home/nicolas/Projects/experimentos/compiled-cnn/yolov10s.pt .
+mkdir -p artifacts  # MAIN_CHECKOUT: checkout principal com os artefatos da rodada 1
+cp -r "$MAIN_CHECKOUT"/artifacts/{data,ref,yolov10s_fp32.onnx} artifacts/
+cp "$MAIN_CHECKOUT"/yolov10s.pt .
 uv sync
 
 # Cache reutilizável fora do repositório; não versionar datasets.
