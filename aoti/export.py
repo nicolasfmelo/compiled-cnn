@@ -69,17 +69,18 @@ def load_model(precision):
     return model.half() if precision == "fp16" else model.float()
 
 
-def preprocess(image):
-    boxed = LetterBox(new_shape=(640, 640), auto=False)(image=image)
+def preprocess(image, shape=(640, 640)):
+    boxed = LetterBox(new_shape=shape, auto=False)(image=image)
     rgb = boxed[:, :, ::-1].transpose(2, 0, 1)
     return np.ascontiguousarray(rgb[None], dtype="<f4") / np.float32(255)
 
 
-def original_detections(output, image):
+def original_detections(output, image, shape=(640, 640)):
     height, width = image.shape[:2]
-    gain = min(640 / height, 640 / width)
-    left = round((640 - round(width * gain)) / 2 - 0.1)
-    top = round((640 - round(height * gain)) / 2 - 0.1)
+    h_t, w_t = shape
+    gain = min(h_t / height, w_t / width)
+    left = round((w_t - round(width * gain)) / 2 - 0.1)
+    top = round((h_t - round(height * gain)) / 2 - 0.1)
     result = []
     for row in output[0]:
         x1, y1, x2, y2, score, cls = map(float, row)

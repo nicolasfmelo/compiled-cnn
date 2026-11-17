@@ -32,6 +32,12 @@ constexpr size_t INPUT_SIZE = 3 * 640 * 640;
 constexpr size_t OUTPUT_SIZE = 300 * 6;
 constexpr float CONF = 0.25f;
 
+struct InputShape {
+    int height = 640;
+    int width = 640;
+    size_t size() const { return 3ull * height * width; }
+};
+
 inline double milliseconds(Clock::time_point start) {
     return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 }
@@ -98,7 +104,7 @@ inline Match match(const std::vector<Detection>& a, const std::vector<Detection>
 }
 
 template<class Infer>
-int validate(Infer&& infer, bool half, const fs::path& directory) {
+int validate(Infer&& infer, bool half, const fs::path& directory, InputShape shape = {}) {
     std::ifstream manifest(directory / "manifest.txt");
     if (!manifest) throw std::runtime_error("cannot open manifest");
     std::string name;
@@ -109,7 +115,7 @@ int validate(Infer&& infer, bool half, const fs::path& directory) {
         if (name.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != std::string::npos)
             throw std::runtime_error("invalid sample name in manifest");
         ++samples;
-        auto data = read_binary(directory / (name + ".input.bin"), INPUT_SIZE);
+        auto data = read_binary(directory / (name + ".input.bin"), shape.size());
         auto eager = read_binary(directory / (name + (half ? ".eager_fp16.bin" : ".eager_fp32.bin")), OUTPUT_SIZE);
         auto output = infer(data);
         float overall_max = 0;
@@ -187,18 +193,19 @@ inline const std::array<const char*, 80> COCO = {
     "scissors", "teddy bear", "hair drier", "toothbrush"};
 
 struct ImageInput { std::vector<float> data; int width, height, left, top; double gain; };
-inline ImageInput letterbox(const fs::path& path) {
+inline ImageInput letterbox(const fs::path& path, InputShape shape = {}) {
     int width, height, channels;
     std::unique_ptr<unsigned char, decltype(&stbi_image_free)> image(
         stbi_load(path.c_str(), &width, &height, &channels, 3), stbi_image_free);
     if (!image) throw std::runtime_error(std::string("image load failed: ") + stbi_failure_reason());
-    double gain = std::min(640.0 / width, 640.0 / height);
+    double gain = std::min(static_cast<double>(shape.width) / width,
+                           static_cast<double>(shape.height) / height);
     // nearbyint uses round-to-even, matching Python/Ultralytics round.
     int resized_w = static_cast<int>(std::nearbyint(width * gain));
     int resized_h = static_cast<int>(std::nearbyint(height * gain));
-    int left = static_cast<int>(std::round((640 - resized_w) / 2.0 - 0.1));
-    int top = static_cast<int>(std::round((640 - resized_h) / 2.0 - 0.1));
-    ImageInput result{std::vector<float>(INPUT_SIZE, 114.f / 255.f), width, height, left, top, gain};
+    int left = static_cast<int>(std::round((shape.width - resized_w) / 2.0 - 0.1));
+    int top = static_cast<int>(std::round((shape.height - resized_h) / 2.0 - 0.1));
+    ImageInput result{std::vector<float>(shape.size(), 114.f / 255.f), width, height, left, top, gain};
     // Half-pixel bilinear resize with edge replication, rounded to uint8 before /255.
     for (int y = 0; y < resized_h; ++y) {
         double sy = (y + 0.5) * height / resized_h - 0.5;
@@ -214,7 +221,7 @@ inline ImageInput letterbox(const fs::path& path) {
                 auto pixel = [&](int py, int px) { return image.get()[(py * width + px) * 3 + c]; };
                 double value = (1 - wy) * ((1 - wx) * pixel(y0, x0) + wx * pixel(y0, x1))
                              + wy * ((1 - wx) * pixel(y1, x0) + wx * pixel(y1, x1));
-                result.data[c * 640 * 640 + (y + top) * 640 + x + left] =
+                result.data[static_cast<size_t>(c) * shape.height * shape.width + (y + top) * shape.width + x + left] =
                     static_cast<float>(std::round(value)) / 255.f;
             }
         }
@@ -239,8 +246,9 @@ inline std::vector<Detection> read_detections(const fs::path& path) {
     return result;
 }
 template<class Infer>
-int detect(Infer&& infer, bool half, const fs::path& image, const std::optional<fs::path>& check) {
-    auto input = letterbox(image);
+int detect(Infer&& infer, bool half, const fs::path& image, const std::optional<fs::path>& check,
+           InputShape shape = {}) {
+    auto input = letterbox(image, shape);
     auto dets = detections(infer(input.data));
     for (auto& d : dets) {
         for (int c = 0; c < 4; ++c) {
@@ -278,6 +286,14 @@ inline void print_bench(std::vector<double> times, double load_ms, double first)
     if (memory) std::cout << *memory; else std::cout << "n/a";
     std::cout << "\npeak RSS MiB: " << usage.ru_maxrss / 1024.0
               << std::setprecision(2) << "\nload ms: " << load_ms << " | first run ms: " << first << '\n';
+}
+
+inline void print_gpu_latency(std::vector<double> times) {
+    double mean = std::accumulate(times.begin(), times.end(), 0.0) / times.size();
+    std::sort(times.begin(), times.end());
+    std::cout << std::fixed << std::setprecision(2)
+              << "gpu latency ms: mean " << mean << " | p50 " << percentile(times, 0.5)
+              << " | p95 " << percentile(times, 0.95) << '\n';
 }
 
 inline void check_host() {
