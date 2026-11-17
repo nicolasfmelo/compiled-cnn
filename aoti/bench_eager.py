@@ -37,7 +37,7 @@ def gpu_memory():
             pynvml.nvmlShutdown()
 
 
-def benchmark(precision, cudnn_benchmark=False):
+def benchmark(precision, cudnn_benchmark=False, height=640):
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA GPU required")
     torch.cuda.set_device(0)
@@ -47,7 +47,8 @@ def benchmark(precision, cudnn_benchmark=False):
     torch.backends.cudnn.benchmark = cudnn_benchmark
     # CUDA context creation and input transfer are outside model load/forward.
     torch.cuda.init()
-    data = np.fromfile(ARTIFACTS / "ref/bus.input.bin", dtype="<f4").reshape(1, 3, 640, 640)
+    ref = "ref" if height == 640 else "ref_384x640"
+    data = np.fromfile(ARTIFACTS / ref / "bus.input.bin", dtype="<f4").reshape(1, 3, height, 640)
     dtype = torch.float16 if precision == "fp16" else torch.float32
     x = torch.from_numpy(data).to(device="cuda", dtype=dtype)
     torch.cuda.synchronize()
@@ -72,7 +73,8 @@ def benchmark(precision, cudnn_benchmark=False):
     mean = statistics.mean(latencies)
     p50, p95 = np.percentile(latencies, [50, 95])
     suffix = " cudnn-bench" if cudnn_benchmark else ""
-    print(f"variant: eager-py {precision}{suffix}")
+    shape_suffix = " 384x640" if height == 384 else ""
+    print(f"variant: eager-py {precision}{shape_suffix}{suffix}")
     print("settings: cudnn_tf32=" + ("on" if torch.backends.cudnn.allow_tf32 else "off")
           + " matmul_tf32=" + ("on" if torch.backends.cuda.matmul.allow_tf32 else "off")
           + " cudnn_benchmark=" + ("on" if torch.backends.cudnn.benchmark else "off"))
@@ -86,13 +88,14 @@ def benchmark(precision, cudnn_benchmark=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--precision", choices=("fp32", "fp16"))
+    parser.add_argument("--height", type=int, choices=(640, 384), default=640)
     parser.add_argument("--cudnn-benchmark", action="store_true", help="enable cuDNN algorithm autotuning")
     args = parser.parse_args()
     if args.precision:
-        benchmark(args.precision, args.cudnn_benchmark)
+        benchmark(args.precision, args.cudnn_benchmark, args.height)
     else:
         for precision in ("fp32", "fp16"):
-            command = [sys.executable, __file__, "--precision", precision]
+            command = [sys.executable, __file__, "--precision", precision, "--height", str(args.height)]
             if args.cudnn_benchmark:
                 command.append("--cudnn-benchmark")
             subprocess.run(command, check=True)
