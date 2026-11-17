@@ -242,7 +242,32 @@ cat artifacts/engine/bench/engine-summary.txt
 
 The summary includes an "ideal" estimate (median p5 latency, i.e. the fastest 5% of iterations) and the margin of the mean over it, which matters when the host cannot be idled. Build processes still discard a run in both modes. `BENCH_SMOKE=1` does a one-round parse check.
 
-## 9. Final report (PDF and HTML)
+## 9. TensorRT FP16 tuning (PBI-099)
+
+Start with the fixed references, FP16 ONNX from section 5 and a built `yolo_trt`. This creates a separate static 640×384 input (NCHW `1×3×384×640`) and five independent plans; level 3 takes about 1 minute per build and level 5 about 3.5–4 minutes. These commands overwrite their own tuning outputs, not the round-2 plans or references.
+
+```bash
+uv run python trt/export_rect.py
+bash trt/build_tuned.sh
+B=build/bin/yolo_trt
+T=artifacts/trt_tuning
+$B validate $T/fp16_640_o3_b1.plan artifacts/ref
+$B validate $T/fp16_640_o3_b2.plan artifacts/ref
+$B validate $T/fp16_640_o5_b1.plan artifacts/ref
+$B validate $T/fp16_640_o5_b2.plan artifacts/ref
+$B validate $T/fp16_640_o5_b1.plan artifacts/ref --graph
+$B validate $T/fp16_384x640_o5.plan artifacts/ref_384x640 --graph
+$B detect $T/fp16_384x640_o5.plan artifacts/data/bus.jpg --check artifacts/ref_384x640/bus.eager_fp16_dets.txt
+$B detect $T/fp16_384x640_o5.plan artifacts/data/zidane.jpg --check artifacts/ref_384x640/zidane.eager_fp16_dets.txt
+$B compare $T/fp16_640_o5_b1.plan $T/fp16_384x640_o5.plan artifacts/data/zidane.jpg artifacts/data/webcam_0{0..5}.jpg
+uv run python trt/eager_rect_scores.py
+bash trt/profile_tuned.sh
+bash scripts/bench_trt_tuning.sh
+```
+
+Each validation is expected to pass 8/8 against eager at the same size. The separate rect-vs-square experiment has four expected FAIL lines: zidane exceeds the score-difference limit, and webcam_03–05 have one square-only low-confidence detection each. `compare` returns nonzero, so do not use `set -e` for this sequence; its two-engine logger warning is harmless. The eager scores confirm the drop also occurs in PyTorch, with a preprocessing caveat for webcam_03; see the [technical report](tensorrt-fp16-tuning-results.md). The benchmark uses three rotating rounds, 30 s cooldown, 50 warm-ups and 500 measured iterations; the recorded webcam-profile host mean was 1.69 ms.
+
+## 10. Final report (PDF and HTML)
 
 ```bash
 uv run --no-project --with weasyprint --with matplotlib python docs/report/build_report.py
