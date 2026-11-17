@@ -17,7 +17,7 @@ Every backend is checked against the same fixed PyTorch reference with fixed tol
 
 ## Results at a glance
 
-The tables show the latency of one forward pass: batch 1, static 640×640 input, with the input already in device memory. FPS = 1000 / mean latency. This is the model alone, with no camera and no drawing.
+Except for the separate webcam-profile table, the tables show the latency of one forward pass: batch 1, static 640×640 input, with the input already in device memory. FPS = 1000 / mean latency. This is the model alone, with no camera and no drawing.
 
 **NVIDIA RTX 3050 6GB Laptop**
 
@@ -26,8 +26,20 @@ The tables show the latency of one forward pass: batch 1, static 640×640 input,
 | PyTorch eager (Python) | 10.02 ms | 5.59 ms | 1.00× | reference |
 | AOTInductor (C++) | 8.46 ms | 3.92 ms | 1.43× | 16/16 |
 | **TensorRT (C++)** | **7.39 ms** | **2.94 ms (340 FPS)** | **1.90×** | 23/24 ¹ |
+| TensorRT FP16, builder level 5 + CUDA Graph (C++) ⁵ | — | 2.78 ms (360 FPS) | 2.02× | 8/8 |
 | TensorRT FP32 with `--noTF32` | 7.86 ms | — | — | 8/8 |
 | ncnn Vulkan (C++, cooperative matrix) | 18.55 ms | 9.69 ms | 0.58× | 16/16 |
+
+**NVIDIA RTX 3050 6GB Laptop, webcam profile (640×384 input, PBI-099)**
+
+| Backend | Latency | vs eager, same size | vs default 640×640 engine |
+|---|---|---|---|
+| PyTorch eager FP16 | 3.61 ms | 1.00× | — |
+| TensorRT FP16, level 5 + CUDA Graph | 1.69 ms (592 FPS) | 2.14× | 1.76× |
+
+Seven of the eight validation images are 16:9, where 640×384 keeps the same effective resolution as 640×640. Strong detections keep box and class, but low-confidence detections touching the top or bottom edge can drop below the 0.25 threshold ([technical report, pt-BR](docs/tensorrt-fp16-tuning-results.md)).
+
+All PBI-099 engines pass 8/8 against eager at the same input size; the rect-vs-square comparison is an experiment result, not a validation.
 
 **Intel Core i5-13450HX, 6 threads pinned to the 6 P-cores**
 
@@ -47,6 +59,7 @@ The tables show the latency of one forward pass: batch 1, static 640×640 input,
 ² mAP50-95 on 500 COCO val2017 images: 49.33 (FP32) → 49.02 (INT8). Calibration used 300 different val images.
 ³ Measured while a browser and a chat app were running (they could not be closed), with OpenVINO in the same session. FP32: engine 46.67 ms vs OpenVINO 43.71 ms (**1.07×**). INT8: engine 20.94 ms vs OpenVINO INT8 17.01 ms (**1.23×**). "Ideal" is the p5 latency (the fastest 5% of iterations), an estimate of the latency without that load. OpenVINO's estimates (40.78 and 15.06 ms) agree with its idle-host results of 40.20 and 14.91 ms. FP32 engine on one thread: 215.81 ms.
 ⁴ Against a fixed peak of 800 GFLOPS (6 × 32 FLOP/cycle × 4.2 GHz), not the measured clock.
+⁵ Measured in the PBI-099 session, where eager FP16 ran at 5.61 ms and the default TensorRT FP16 engine at 2.98 ms; the gain comes from the CUDA Graph, while level 5 adds nothing measurable.
 
 **Notes on the numbers**
 - CPU and ncnn rows are **medians of 3 thermally controlled rounds**: a 60 s cooldown before every run, and the order rotates between rounds.
@@ -55,6 +68,7 @@ The tables show the latency of one forward pass: batch 1, static 640×640 input,
 
 **Takeaways**
 - **NVIDIA GPU:** TensorRT is the fastest and leaves the leanest runtime (only `libnvinfer` and the CUDA runtime). The cost is a ~1 minute engine build, and the engine is tied to this GPU and TensorRT version.
+- **TensorRT tuning:** CUDA Graph reduces launch overhead; the separate 640×384 webcam profile is faster but changes detections near image edges.
 - **AOTInductor** removes Python but not libtorch. It is a good middle ground with a light build.
 - **Vulkan** is portable but far behind CUDA on this NVIDIA GPU, even when it uses the tensor cores through cooperative matrix.
 - **FP16 on this CPU** does not help, because there is no AVX-512 FP16 and no AMX.
@@ -119,6 +133,10 @@ webcam_yolo.py          Round 0: YOLOv10s on the webcam in a window, with FPS an
 aoti/                   Round 1: export.py (fixed references + .pt2 packages), bench_eager.py
   cpp/                  yolo_aoti: C++ runner on libtorch (validate / bench / detect)
 trt/                    Round 2: export_onnx.py, build_engines.sh (trtexec)
+  export_rect.py        PBI-099: rectangular FP16 ONNX and eager references
+  build_tuned.sh        Independent level 3/5 TensorRT builds
+  profile_tuned.sh, profile_top.py  Per-layer profiles and top layers
+  eager_rect_scores.py  Compare eager scores at both input sizes
   cpp/                  yolo_trt: C++ runner on TensorRT only
 cpu/                    Round 3: CPU validation, INT8 quantization (NNCF), COCO mAP, CPU benchmark, COCO download
 ncnn/                   Round 4: export_ncnn.py (pnnx conversion)
@@ -131,7 +149,8 @@ engine/                 Own CPU engine
   cpp/main.cpp          yolo_engine (validate / bench / detect / serve)
   validate_int8.py, eval_map.py, engine_client.py, tests/
 native/                 Shared C++ headers (cnn_native target): validation, letterbox, NVML, stats, YOLOv10 post-process
-scripts/                Benchmark scripts with thermal control (bench_all, bench_cpu, bench_ncnn, bench_engine)
+scripts/                Benchmark scripts (bench_all, bench_cpu, bench_ncnn, bench_engine, bench_trt_tuning)
+  summarize_trt_tuning.py  PBI-099 median and speedup summary
 docs/
   report/               Final report (PDF and HTML, Portuguese) and its generator
   REPRODUCE.md          Detailed reproduction guide and troubleshooting (English)
@@ -193,6 +212,8 @@ Run only the lines of the backends you want:
 
 ```bash
 uv run python trt/export_onnx.py && bash trt/build_engines.sh    # TensorRT: ONNX, then 3 engines with trtexec (~1 min each)
+uv run python trt/export_rect.py                                # optional: webcam-profile ONNX and references
+bash trt/build_tuned.sh                                         # optional: PBI-099 engines for webcam-profile benchmark
 bash cpu/download_coco.sh                                        # COCO val2017 to ~/.cache/compiled-cnn/coco (~1 GB, for INT8 and mAP)
 uv run python cpu/quantize_int8.py                               # OpenVINO: FP32 IR + INT8 IR calibrated with NNCF (~40 s)
 uv run python ncnn/export_ncnn.py                                # ncnn: pnnx conversion to .param/.bin
@@ -252,6 +273,7 @@ Accuracy on COCO (500 images): `uv run python cpu/eval_map.py` (eager, OpenVINO 
 
 ```bash
 bash scripts/bench_all.sh        # GPU: eager vs AOTInductor vs TensorRT, 7 variants          -> artifacts/bench/round2.txt
+bash scripts/bench_trt_tuning.sh # PBI-099: TensorRT FP16 ablation, 3 rotating rounds
 bash scripts/bench_cpu.sh        # CPU: eager, ORT, OpenVINO FP32/INT8, 3 rounds (~20 min)     -> artifacts/bench/round3-summary.txt
 bash scripts/bench_ncnn.sh       # ncnn Vulkan + CPU, 3 rounds (~20 min); --with-intel adds the iGPU
 bash scripts/bench_engine.sh     # own engine FP32/INT8 vs OpenVINO FP32/INT8 (~20 min)     -> artifacts/engine/bench/engine-summary.txt
@@ -291,7 +313,7 @@ Writes `docs/report/relatorio-pbi-095.html` and `.pdf` from the same source. The
 
 ## Caveats
 
-- One laptop, one GPU, unlocked clocks. Batch 1 and a static 640×640 input only.
+- One laptop, one GPU, unlocked clocks. Batch 1 and static inputs: 640×640 and the separate 640×384 webcam profile.
 - The 8 validation images check numerical equivalence, not accuracy. Accuracy (mAP) was measured for the CPU INT8 comparisons only.
 - TensorRT `.plan` engines and AOTInductor `.pt2` packages are specific to the GPU architecture (and, for TensorRT, to the TensorRT version).
 - The own-engine benchmarks ran with a browser and a chat app open. OpenVINO ran in the same sessions for a fair comparison, and the p5-based "ideal" is an estimate.
