@@ -168,6 +168,23 @@ def chart_engine():
     return svg(fig)
 
 
+def chart_trt_tuning():
+    plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 9, "svg.fonttype": "none"})
+    rows = [("Eager 640×640", 5.61), ("A-b1: nível 3", 2.98),
+            ("B-b1: nível 5", 2.94), ("C: nível 5 + grafo", 2.78),
+            ("Eager 640×384", 3.61), ("D: 640×384 + grafo", 1.69)]
+    fig, ax = plt.subplots(figsize=(7.0, 3.0))
+    for i, (name, value) in enumerate(rows):
+        ax.barh(i, value, height=0.6, color=(BLUE if i in (0, 4) else AQUA), zorder=3)
+        ax.text(value + 0.08, i, f"{value:.2f}".replace(".", ","), va="center", color=INK, fontsize=8.5)
+    ax.set_yticks(range(len(rows)), [r[0] for r in rows])
+    ax.invert_yaxis()
+    ax.set_xlim(0, 6.4)
+    ax.set_xlabel("Latência média host em ms (mediana de 3 rodadas; menor é melhor)", color=INK2)
+    style_axes(ax)
+    return svg(fig)
+
+
 CSS = """
 :root { --ink:#1f1f1e; --ink2:#4a4a48; --muted:#6f6f6c; --line:#e4e4e1; --zebra:#f6f6f4;
         --panel:#f1f5fb; --accent:#2a78d6; --bg:#ffffff; --warn:#b5520f; }
@@ -243,7 +260,7 @@ def build_html():
     S = []
     S.append("""
 <h1>YOLOv10s compilada para runtimes nativos</h1>
-<div class="sub">PBI-095, PBI-097 e PBI-098 · Relatório completo do experimento · 12 de novembro de 2026 · notebook com RTX 3050 6GB Laptop e i5-13450HX</div>
+<div class="sub">PBI-095, PBI-097, PBI-098 e PBI-099 · Relatório completo do experimento · 12 de novembro de 2026 · notebook com RTX 3050 6GB Laptop e i5-13450HX</div>
 
 <p>Este relatório reúne as quatro rodadas de um experimento, e o engine próprio construído em seguida, sobre uma pergunta simples: <b>quanto se ganha ao compilar uma rede de detecção para um artefato nativo e executá-la a partir de C++</b>, em vez de rodar o PyTorch em Python, o que esse artefato ainda exige para funcionar e se o resultado numérico continua o mesmo. A rede é a YOLOv10s (Ultralytics). Foram testados AOTInductor e TensorRT na GPU NVIDIA, ONNX Runtime e OpenVINO (FP32 e INT8) na CPU, e ncnn via Vulkan na GPU NVIDIA, na GPU integrada Intel e na CPU. Por fim, um <b>engine de inferência próprio em C++</b>, gerado a partir do ONNX e sem nenhuma biblioteca de inferência, foi comparado ao OpenVINO na CPU, em FP32 e em INT8. Todos os backends foram validados contra a mesma referência, com tolerâncias fixas, e medidos com o mesmo protocolo.</p>
 
@@ -271,7 +288,7 @@ def build_html():
 <nav><ol>
 <li>Motivação</li><li>Conceitos usados no relatório</li><li>Hardware: a linha de base</li><li>Método comum</li><li>Ponto de partida: a webcam</li>
 <li>Rodada 1: AOTInductor</li><li>Rodada 2: TensorRT</li><li>Rodada 3: CPU</li><li>Rodada 4: ncnn e Vulkan</li>
-<li>Engine próprio em C++</li><li>Comparação geral</li><li>Problemas e lições</li><li>Conclusão</li><li>Apêndice: versões e reprodução</li>
+<li>Engine próprio em C++</li><li>TensorRT FP16 otimizado (PBI-099)</li><li>Comparação geral</li><li>Problemas e lições</li><li>Conclusão</li><li>Apêndice: versões e reprodução</li>
 </ol></nav>
 """)
 
@@ -517,8 +534,25 @@ def build_html():
 <div class="note"><b>Resultado INT8:</b> o engine fica a <b>1,23× do OpenVINO INT8</b> (1,31× nos ideais), com perda de acurácia menor (0,26 contra 0,31 ponto de mAP). A meta de 20 ms ficou na fronteira: 20,94 ms medidos com carga, ~19,8 ms estimados sem ela. O ideal do OpenVINO INT8 (15,06 ms) bate de novo com a medição em host ocioso da rodada 3 (14,91 ms). A distância cresce no INT8 porque quantizar no empacotamento custa ~25% do tempo, enquanto o OpenVINO mantém as ativações em INT8 entre camadas; esse é o próximo passo.</div>
 """)
 
-    # 10. Comparação geral
-    S.append("<h2>11. Comparação geral</h2>")
+    # 11. TensorRT FP16 otimizado
+    S.append("""
+<h2 class="newpage">11. TensorRT FP16 otimizado (PBI-099)</h2>
+<p>Na sessão de 16/11/2026, os planos FP16 estáticos foram reconstruídos com a GPU ociosa. A ablação compara nível 3, nível 5, CUDA Graph e entrada webcam 640×384 (NCHW <code>1×3×384×640</code>). Cada variante roda em processo separado, com três rodadas em ordem rotativa, pausa de 30 s, 50 aquecimentos e 500 iterações medidas. Os números são medianas das três rodadas; os clocks não foram travados.</p>
+""")
+    S.append(f'<div class="figure">{chart_trt_tuning()}</div>')
+    S.append(table(["Variante", "Host média", "GPU média", "vs A-b1", "vs eager mesmo tamanho"], [
+        ["Eager 640×640", "5,61 ms", "—", "0,53×", "1,00×"],
+        ["Eager 640×384", "3,61 ms", "—", "0,83×", "1,00×"],
+        ["A: nível 3, b1 / b2", "2,98 / 2,97 ms", "2,96 / 2,96 ms", "1,00× / 1,00×", "1,88× / 1,89×"],
+        ["B: nível 5, b1 / b2", "2,94 / 2,92 ms", "2,91 / 2,91 ms", "1,01× / 1,02×", "1,91× / 1,92×"],
+        ["C: B-b1 + CUDA Graph", "2,78 ms", "2,72 ms", "1,07×", "2,02×"],
+        ["D: 640×384 + CUDA Graph", "1,69 ms", "1,63 ms", "1,76×", "2,14×"],
+    ], num_cols=(1, 2, 3, 4)))
+    S.append("""<p>O nível 5 não teve ganho mensurável frente ao ruído de ±3%, apesar de build cerca de 3,3× mais longo. O grafo reduz o host de 2,94 para 2,78 ms; eventos CUDA medem do primeiro ao último trabalho na GPU e, sem grafo, incluem intervalos em que o dispositivo espera lançamentos da CPU. O timing do <code>trtexec</code> com grafo no nível 3 foi 2,74 ms de GPU, próximo dos 2,72 ms de C. D muda a carga: 1,64× em relação a C; a razão GPU 1,63/2,72 = 0,60 coincide com a razão de pixels nesta medição, sem estabelecer uma lei geral. A soma do perfil por camada cai de 3,20 para 2,08 ms (0,65×), com overhead de sincronização; o TopK custa 0,060 ms nos dois formatos.</p>
+<p>Todos os engines passaram 8/8 contra eager no mesmo formato. Na comparação entre formatos em sete imagens 16:9, zidane falhou por diferença de score e três quadros de webcam por contagem: detecções de baixa confiança junto à borda inferior caíram abaixo de 0,25. A queda também aparece no eager; diferenças de pré-processamento C++ e Python afetam scores limítrofes. O critério não foi afrouxado; detalhes em <code>docs/tensorrt-fp16-tuning-results.md</code>.</p>""")
+
+    # 12. Comparação geral
+    S.append("<h2>12. Comparação geral</h2>")
     S.append(f'<div class="figure">{gpu_chart}</div>')
     S.append(table(["Dispositivo", "Backend", "Precisão", "Latência", "FPS", "Dependências em execução", "Artefato"], [
         ["RTX 3050", "PyTorch eager", "FP32 / FP16", "10,02 / 5,59 ms", "100 / 179", "Python, PyTorch, CUDA 12.8", ".pt 15,9 MiB"],
@@ -549,7 +583,7 @@ def build_html():
 
     # 10. Problemas e lições
     S.append("""
-<h2>12. Problemas e lições</h2>
+<h2>13. Problemas e lições</h2>
 <ul>
 <li><b>Configuração assimétrica distorce comparações.</b> O TF32 ligado de um lado e desligado do outro inflou o ganho do AOTInductor de 1,18× para 1,29×. Toda medição passou a imprimir a configuração usada.</li>
 <li><b>A temperatura do notebook é uma variável.</b> Medições em sequência penalizaram quem rodou por último em até 25%. Resfriamento, ordem trocada e mediana resolveram.</li>
@@ -563,12 +597,12 @@ def build_html():
 
     # 11. Conclusão
     S.append("""
-<h2>13. Conclusão</h2>
+<h2>14. Conclusão</h2>
 <h3>Respostas às perguntas</h3>
 <ul>
 <li><b>Viabilidade: sim.</b> A YOLOv10s exportou e compilou em todos os caminhos sem operações customizadas (no ncnn, com o TopK em C++). As saídas ficaram dentro das tolerâncias, com duas exceções de causa conhecida: o TF32 do TensorRT e o FP16 na GPU integrada.</li>
 <li><b>Dependências: dependem do backend.</b> O AOTInductor elimina o Python, mas não a libtorch. O TensorRT deixa só <code>libnvinfer</code> e o runtime CUDA. O ncnn deixa só a própria biblioteca e o loader Vulkan, e roda em qualquer GPU. Em todos os casos os pesos ficam embutidos no artefato.</li>
-<li><b>Ganho: real e maior em precisão reduzida.</b> Na GPU NVIDIA, o TensorRT FP16 dá 1,90× sobre o eager. Na CPU, o OpenVINO INT8 dá 3,73× sobre o eager e 2,70× sobre o OpenVINO FP32, perdendo só 0,31 ponto de mAP. Já o Vulkan na NVIDIA ficou abaixo do eager (0,58× em FP16).</li>
+<li><b>Ganho: real e maior em precisão reduzida.</b> Na GPU NVIDIA, o TensorRT FP16 dá 1,90× sobre o eager. Na CPU, o OpenVINO INT8 dá 3,73× sobre o eager e 2,70× sobre o OpenVINO FP32, perdendo só 0,31 ponto de mAP. Já o Vulkan na NVIDIA ficou abaixo do eager (0,58× em FP16). TensorRT FP16 com CUDA Graph chegou a 2,78 ms, 2,02× sobre eager; com entrada webcam 640×384, 1,69 ms.</li>
 </ul>
 <h3>O que usar em cada alvo</h3>
 <ul>
@@ -580,7 +614,7 @@ def build_html():
 <p>Para a integração com a Enty (PBI-096), o resultado sugere um backend em torno de um formato intermediário (ONNX) e de um runtime nativo trocável por alvo, já que o melhor caminho muda conforme o hardware.</p>
 <h3>Limitações</h3>
 <ul>
-<li>Uma única máquina, sem clock travado. Só batch 1 e entrada estática 640×640.</li>
+<li>Uma única máquina, sem clock travado. Só batch 1 e entradas estáticas (640×640 e 640×384 na seção 11).</li>
 <li>As 8 imagens de validação conferem equivalência numérica, não acurácia; a acurácia (mAP) só foi medida na comparação INT8 da CPU.</li>
 <li>Os artefatos do TensorRT e do AOTInductor são específicos da arquitetura da GPU (e, no TensorRT, da versão).</li>
 </ul>
@@ -589,7 +623,7 @@ def build_html():
 """)
 
     # Apêndice
-    S.append("<h2>14. Apêndice: versões e reprodução</h2>")
+    S.append("<h2>15. Apêndice: versões e reprodução</h2>")
     S.append(table(["Componente", "Versão"], [
         ["PyTorch / Ultralytics", "2.11.0+cu128 / 8.4.210"],
         ["TensorRT / cuDNN (sistema)", "11.4.0.106 / 9.28.1"],
@@ -610,10 +644,10 @@ def build_html():
 <li><b>Artefatos de cada backend:</b> exportação ONNX e engines TensorRT; IR do OpenVINO e INT8 com NNCF; conversão ncnn; ONNX bruto, calibração e geração do engine próprio.</li>
 <li><b>Compilação de todo o C++:</b> <code>cmake --preset release</code> e <code>cmake --build --preset release</code>. O CMake compila cada runner cujas dependências encontra, coloca os binários em <code>build/bin/</code> e informa o que pulou e por quê. <code>ctest --preset release</code> roda os testes do engine.</li>
 <li><b>Validação:</b> o comando <code>validate</code> de cada runner compara as 8 imagens com a referência; <code>engine/validate_int8.py</code> e <code>cpu/validate.py</code> fazem o mesmo para o INT8 e para a CPU. O mAP vem de <code>cpu/eval_map.py</code> e <code>engine/eval_map.py</code>.</li>
-<li><b>Benchmarks:</b> os scripts em <code>scripts/</code> (<code>bench_all</code>, <code>bench_cpu</code>, <code>bench_ncnn</code> e <code>bench_engine</code>) aplicam o protocolo térmico e gravam os resumos em <code>artifacts/</code>.</li>
+<li><b>Benchmarks:</b> os scripts em <code>scripts/</code> (<code>bench_all</code>, <code>bench_cpu</code>, <code>bench_ncnn</code>, <code>bench_engine</code> e <code>bench_trt_tuning</code>) aplicam o protocolo térmico e gravam os resumos em <code>artifacts/</code>.</li>
 <li><b>Este relatório:</b> <code>docs/report/build_report.py</code> gera o HTML e o PDF a partir da mesma fonte.</li>
 </ol>
-<p>Os relatórios técnicos de cada rodada estão em <code>docs/aoti-results.md</code>, <code>docs/tensorrt-results.md</code>, <code>docs/cpu-results.md</code>, <code>docs/ncnn-vulkan-results.md</code>, <code>docs/engine-results.md</code> e <code>docs/engine-int8-results.md</code>.</p>""")
+<p>Os relatórios técnicos de cada rodada estão em <code>docs/aoti-results.md</code>, <code>docs/tensorrt-results.md</code>, <code>docs/tensorrt-fp16-tuning-results.md</code>, <code>docs/cpu-results.md</code>, <code>docs/ncnn-vulkan-results.md</code>, <code>docs/engine-results.md</code> e <code>docs/engine-int8-results.md</code>.</p>""")
 
     return f"""<!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8">

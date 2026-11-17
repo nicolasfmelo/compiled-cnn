@@ -60,7 +60,7 @@ nav ol { columns: 2; font-size: 14px; padding-left: 20px; }
 </style></head>
 <body>
 <h1>YOLOv10s compilada para runtimes nativos</h1>
-<div class="sub">PBI-095, PBI-097 e PBI-098 · Relatório completo do experimento · 12 de novembro de 2026 · notebook com RTX 3050 6GB Laptop e i5-13450HX</div>
+<div class="sub">PBI-095, PBI-097, PBI-098 e PBI-099 · Relatório completo do experimento · 12 de novembro de 2026 · notebook com RTX 3050 6GB Laptop e i5-13450HX</div>
 
 <p>Este relatório reúne as quatro rodadas de um experimento, e o engine próprio construído em seguida, sobre uma pergunta simples: <b>quanto se ganha ao compilar uma rede de detecção para um artefato nativo e executá-la a partir de C++</b>, em vez de rodar o PyTorch em Python, o que esse artefato ainda exige para funcionar e se o resultado numérico continua o mesmo. A rede é a YOLOv10s (Ultralytics). Foram testados AOTInductor e TensorRT na GPU NVIDIA, ONNX Runtime e OpenVINO (FP32 e INT8) na CPU, e ncnn via Vulkan na GPU NVIDIA, na GPU integrada Intel e na CPU. Por fim, um <b>engine de inferência próprio em C++</b>, gerado a partir do ONNX e sem nenhuma biblioteca de inferência, foi comparado ao OpenVINO na CPU, em FP32 e em INT8. Todos os backends foram validados contra a mesma referência, com tolerâncias fixas, e medidos com o mesmo protocolo.</p>
 
@@ -88,7 +88,7 @@ nav ol { columns: 2; font-size: 14px; padding-left: 20px; }
 <nav><ol>
 <li>Motivação</li><li>Conceitos usados no relatório</li><li>Hardware: a linha de base</li><li>Método comum</li><li>Ponto de partida: a webcam</li>
 <li>Rodada 1: AOTInductor</li><li>Rodada 2: TensorRT</li><li>Rodada 3: CPU</li><li>Rodada 4: ncnn e Vulkan</li>
-<li>Engine próprio em C++</li><li>Comparação geral</li><li>Problemas e lições</li><li>Conclusão</li><li>Apêndice: versões e reprodução</li>
+<li>Engine próprio em C++</li><li>TensorRT FP16 otimizado (PBI-099)</li><li>Comparação geral</li><li>Problemas e lições</li><li>Conclusão</li><li>Apêndice: versões e reprodução</li>
 </ol></nav>
 
 <h2>1. Motivação</h2>
@@ -204,7 +204,7 @@ nav ol { columns: 2; font-size: 14px; padding-left: 20px; }
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:date>2026-11-12T11:41:20.166886</dc:date>
+    <dc:date>2026-11-16T22:57:06.996576</dc:date>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -242,16 +242,16 @@ z
      <g id="line2d_1">
       <path d="M 102.782656 151.344 
 L 102.782656 7.2 
-" clip-path="url(#pff130c46d3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p3e5954ba02)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_2">
       <defs>
-       <path id="m655be6812d" d="M 0 0 
+       <path id="m0ccb499f1a" d="M 0 0 
 L 0 3.5 
 " style="stroke: #6f6f6c; stroke-width: 0.8"/>
       </defs>
       <g>
-       <use xlink:href="#m655be6812d" x="102.782656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m0ccb499f1a" x="102.782656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_1">
@@ -262,11 +262,11 @@ L 0 3.5
      <g id="line2d_3">
       <path d="M 151.607656 151.344 
 L 151.607656 7.2 
-" clip-path="url(#pff130c46d3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p3e5954ba02)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_4">
       <g>
-       <use xlink:href="#m655be6812d" x="151.607656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m0ccb499f1a" x="151.607656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_2">
@@ -277,11 +277,11 @@ L 151.607656 7.2
      <g id="line2d_5">
       <path d="M 200.432656 151.344 
 L 200.432656 7.2 
-" clip-path="url(#pff130c46d3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p3e5954ba02)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_6">
       <g>
-       <use xlink:href="#m655be6812d" x="200.432656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m0ccb499f1a" x="200.432656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_3">
@@ -292,11 +292,11 @@ L 200.432656 7.2
      <g id="line2d_7">
       <path d="M 249.257656 151.344 
 L 249.257656 7.2 
-" clip-path="url(#pff130c46d3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p3e5954ba02)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_8">
       <g>
-       <use xlink:href="#m655be6812d" x="249.257656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m0ccb499f1a" x="249.257656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_4">
@@ -307,11 +307,11 @@ L 249.257656 7.2
      <g id="line2d_9">
       <path d="M 298.082656 151.344 
 L 298.082656 7.2 
-" clip-path="url(#pff130c46d3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p3e5954ba02)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_10">
       <g>
-       <use xlink:href="#m655be6812d" x="298.082656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m0ccb499f1a" x="298.082656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_5">
@@ -322,11 +322,11 @@ L 298.082656 7.2
      <g id="line2d_11">
       <path d="M 346.907656 151.344 
 L 346.907656 7.2 
-" clip-path="url(#pff130c46d3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p3e5954ba02)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_12">
       <g>
-       <use xlink:href="#m655be6812d" x="346.907656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m0ccb499f1a" x="346.907656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_6">
@@ -337,11 +337,11 @@ L 346.907656 7.2
      <g id="line2d_13">
       <path d="M 395.732656 151.344 
 L 395.732656 7.2 
-" clip-path="url(#pff130c46d3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p3e5954ba02)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_14">
       <g>
-       <use xlink:href="#m655be6812d" x="395.732656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m0ccb499f1a" x="395.732656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_7">
@@ -352,11 +352,11 @@ L 395.732656 7.2
      <g id="line2d_15">
       <path d="M 444.557656 151.344 
 L 444.557656 7.2 
-" clip-path="url(#pff130c46d3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p3e5954ba02)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_16">
       <g>
-       <use xlink:href="#m655be6812d" x="444.557656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m0ccb499f1a" x="444.557656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_8">
@@ -367,11 +367,11 @@ L 444.557656 7.2
      <g id="line2d_17">
       <path d="M 493.382656 151.344 
 L 493.382656 7.2 
-" clip-path="url(#pff130c46d3)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p3e5954ba02)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_18">
       <g>
-       <use xlink:href="#m655be6812d" x="493.382656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m0ccb499f1a" x="493.382656" y="151.344" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_9">
@@ -425,7 +425,7 @@ L 190.667656 13.752
 L 190.667656 30.844174 
 L 102.782656 30.844174 
 z
-" clip-path="url(#pff130c46d3)" style="fill: #2a78d6"/>
+" clip-path="url(#p3e5954ba02)" style="fill: #2a78d6"/>
    </g>
    <g id="text_16">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="194.573656" y="24.506095" transform="rotate(-0 194.573656 24.506095)">18,0</text>
@@ -436,7 +436,7 @@ L 188.714656 42.238957
 L 188.714656 59.33113 
 L 102.782656 59.33113 
 z
-" clip-path="url(#pff130c46d3)" style="fill: #2a78d6"/>
+" clip-path="url(#p3e5954ba02)" style="fill: #2a78d6"/>
    </g>
    <g id="text_17">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="192.620656" y="52.993051" transform="rotate(-0 192.620656 52.993051)">17,6</text>
@@ -447,7 +447,7 @@ L 214.591906 70.725913
 L 214.591906 87.818087 
 L 102.782656 87.818087 
 z
-" clip-path="url(#pff130c46d3)" style="fill: #2a78d6"/>
+" clip-path="url(#p3e5954ba02)" style="fill: #2a78d6"/>
    </g>
    <g id="text_18">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="218.497906" y="81.480008" transform="rotate(-0 218.497906 81.480008)">22,9</text>
@@ -458,7 +458,7 @@ L 224.356906 99.21287
 L 224.356906 116.305043 
 L 102.782656 116.305043 
 z
-" clip-path="url(#pff130c46d3)" style="fill: #2a78d6"/>
+" clip-path="url(#p3e5954ba02)" style="fill: #2a78d6"/>
    </g>
    <g id="text_19">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="228.262906" y="109.966964" transform="rotate(-0 228.262906 109.966964)">24,9</text>
@@ -469,7 +469,7 @@ L 430.398406 127.699826
 L 430.398406 144.792 
 L 102.782656 144.792 
 z
-" clip-path="url(#pff130c46d3)" style="fill: #2a78d6"/>
+" clip-path="url(#p3e5954ba02)" style="fill: #2a78d6"/>
    </g>
    <g id="text_20">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="434.304406" y="138.453921" transform="rotate(-0 434.304406 138.453921)">67,1</text>
@@ -477,7 +477,7 @@ z
   </g>
  </g>
  <defs>
-  <clipPath id="pff130c46d3">
+  <clipPath id="p3e5954ba02">
    <rect x="102.782656" y="7.2" width="390.6" height="144.144"/>
   </clipPath>
  </defs>
@@ -522,7 +522,7 @@ z
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:date>2026-11-12T11:41:20.201577</dc:date>
+    <dc:date>2026-11-16T22:57:07.031672</dc:date>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -560,16 +560,16 @@ z
      <g id="line2d_1">
       <path d="M 101.465 173.52 
 L 101.465 7.2 
-" clip-path="url(#p06dbb58175)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pd7437d8c5f)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_2">
       <defs>
-       <path id="m7ba2e611c7" d="M 0 0 
+       <path id="m64a21a917c" d="M 0 0 
 L 0 3.5 
 " style="stroke: #6f6f6c; stroke-width: 0.8"/>
       </defs>
       <g>
-       <use xlink:href="#m7ba2e611c7" x="101.465" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m64a21a917c" x="101.465" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_1">
@@ -580,11 +580,11 @@ L 0 3.5
      <g id="line2d_3">
       <path d="M 171.215 173.52 
 L 171.215 7.2 
-" clip-path="url(#p06dbb58175)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pd7437d8c5f)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_4">
       <g>
-       <use xlink:href="#m7ba2e611c7" x="171.215" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m64a21a917c" x="171.215" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_2">
@@ -595,11 +595,11 @@ L 171.215 7.2
      <g id="line2d_5">
       <path d="M 240.965 173.52 
 L 240.965 7.2 
-" clip-path="url(#p06dbb58175)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pd7437d8c5f)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_6">
       <g>
-       <use xlink:href="#m7ba2e611c7" x="240.965" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m64a21a917c" x="240.965" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_3">
@@ -610,11 +610,11 @@ L 240.965 7.2
      <g id="line2d_7">
       <path d="M 310.715 173.52 
 L 310.715 7.2 
-" clip-path="url(#p06dbb58175)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pd7437d8c5f)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_8">
       <g>
-       <use xlink:href="#m7ba2e611c7" x="310.715" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m64a21a917c" x="310.715" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_4">
@@ -625,11 +625,11 @@ L 310.715 7.2
      <g id="line2d_9">
       <path d="M 380.465 173.52 
 L 380.465 7.2 
-" clip-path="url(#p06dbb58175)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pd7437d8c5f)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_10">
       <g>
-       <use xlink:href="#m7ba2e611c7" x="380.465" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m64a21a917c" x="380.465" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_5">
@@ -640,11 +640,11 @@ L 380.465 7.2
      <g id="line2d_11">
       <path d="M 450.215 173.52 
 L 450.215 7.2 
-" clip-path="url(#p06dbb58175)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#pd7437d8c5f)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_12">
       <g>
-       <use xlink:href="#m7ba2e611c7" x="450.215" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m64a21a917c" x="450.215" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_6">
@@ -692,7 +692,7 @@ L 432.638 14.76
 L 432.638 29.236596 
 L 101.465 29.236596 
 z
-" clip-path="url(#p06dbb58175)" style="fill: #2a78d6"/>
+" clip-path="url(#pd7437d8c5f)" style="fill: #2a78d6"/>
    </g>
    <g id="text_12">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="436.823" y="24.206306" transform="rotate(-0 436.823 24.206306)">47,48</text>
@@ -703,7 +703,7 @@ L 420.92 30.845106
 L 420.92 45.321702 
 L 101.465 45.321702 
 z
-" clip-path="url(#p06dbb58175)" style="fill: #eb6834"/>
+" clip-path="url(#pd7437d8c5f)" style="fill: #eb6834"/>
    </g>
    <g id="text_13">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="425.105" y="40.291412" transform="rotate(-0 425.105 40.291412)">45,80</text>
@@ -714,7 +714,7 @@ L 405.017 54.972766
 L 405.017 69.449362 
 L 101.465 69.449362 
 z
-" clip-path="url(#p06dbb58175)" style="fill: #2a78d6"/>
+" clip-path="url(#pd7437d8c5f)" style="fill: #2a78d6"/>
    </g>
    <g id="text_14">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="409.202" y="64.419072" transform="rotate(-0 409.202 64.419072)">43,52</text>
@@ -725,7 +725,7 @@ L 390.509 71.057872
 L 390.509 85.534468 
 L 101.465 85.534468 
 z
-" clip-path="url(#p06dbb58175)" style="fill: #eb6834"/>
+" clip-path="url(#pd7437d8c5f)" style="fill: #eb6834"/>
    </g>
    <g id="text_15">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="394.694" y="80.504178" transform="rotate(-0 394.694 80.504178)">41,44</text>
@@ -736,7 +736,7 @@ L 247.5215 95.185532
 L 247.5215 109.662128 
 L 101.465 109.662128 
 z
-" clip-path="url(#p06dbb58175)" style="fill: #2a78d6"/>
+" clip-path="url(#pd7437d8c5f)" style="fill: #2a78d6"/>
    </g>
    <g id="text_16">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="251.7065" y="104.631838" transform="rotate(-0 251.7065 104.631838)">20,94</text>
@@ -747,7 +747,7 @@ L 239.4305 111.270638
 L 239.4305 125.747234 
 L 101.465 125.747234 
 z
-" clip-path="url(#p06dbb58175)" style="fill: #eb6834"/>
+" clip-path="url(#pd7437d8c5f)" style="fill: #eb6834"/>
    </g>
    <g id="text_17">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="243.6155" y="120.716944" transform="rotate(-0 243.6155 120.716944)">19,78</text>
@@ -758,7 +758,7 @@ L 220.10975 135.398298
 L 220.10975 149.874894 
 L 101.465 149.874894 
 z
-" clip-path="url(#p06dbb58175)" style="fill: #2a78d6"/>
+" clip-path="url(#pd7437d8c5f)" style="fill: #2a78d6"/>
    </g>
    <g id="text_18">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="224.29475" y="144.844604" transform="rotate(-0 224.29475 144.844604)">17,01</text>
@@ -769,7 +769,7 @@ L 206.5085 151.483404
 L 206.5085 165.96 
 L 101.465 165.96 
 z
-" clip-path="url(#p06dbb58175)" style="fill: #eb6834"/>
+" clip-path="url(#pd7437d8c5f)" style="fill: #eb6834"/>
    </g>
    <g id="text_19">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="210.6935" y="160.92971" transform="rotate(-0 210.6935 160.92971)">15,06</text>
@@ -801,19 +801,293 @@ z
   </g>
  </g>
  <defs>
-  <clipPath id="p06dbb58175">
+  <clipPath id="pd7437d8c5f">
    <rect x="101.465" y="7.2" width="390.6" height="166.32"/>
   </clipPath>
  </defs>
 </svg>
 </div><p class="small">As quatro variantes foram medidas na mesma sessão (3 rodadas rotativas, 60 s de resfriamento), com navegador e chat abertos. A barra laranja é a estimativa sem essa carga: a média das 5% iterações mais rápidas de cada execução.</p>
 <div class="note"><b>Resultado INT8:</b> o engine fica a <b>1,23× do OpenVINO INT8</b> (1,31× nos ideais), com perda de acurácia menor (0,26 contra 0,31 ponto de mAP). A meta de 20 ms ficou na fronteira: 20,94 ms medidos com carga, ~19,8 ms estimados sem ela. O ideal do OpenVINO INT8 (15,06 ms) bate de novo com a medição em host ocioso da rodada 3 (14,91 ms). A distância cresce no INT8 porque quantizar no empacotamento custa ~25% do tempo, enquanto o OpenVINO mantém as ativações em INT8 entre camadas; esse é o próximo passo.</div>
-<h2>11. Comparação geral</h2><div class="figure"><svg xmlns:xlink="http://www.w3.org/1999/xlink" width="439.145pt" height="226.712703pt" viewBox="0 0 439.145 226.712703" xmlns="http://www.w3.org/2000/svg" version="1.1">
+
+<h2 class="newpage">11. TensorRT FP16 otimizado (PBI-099)</h2>
+<p>Na sessão de 16/11/2026, os planos FP16 estáticos foram reconstruídos com a GPU ociosa. A ablação compara nível 3, nível 5, CUDA Graph e entrada webcam 640×384 (NCHW <code>1×3×384×640</code>). Cada variante roda em processo separado, com três rodadas em ordem rotativa, pausa de 30 s, 50 aquecimentos e 500 iterações medidas. Os números são medianas das três rodadas; os clocks não foram travados.</p>
+<div class="figure"><svg xmlns:xlink="http://www.w3.org/1999/xlink" width="500.087656pt" height="210.080703pt" viewBox="0 0 500.087656 210.080703" xmlns="http://www.w3.org/2000/svg" version="1.1">
  <metadata>
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:date>2026-11-12T11:41:20.129392</dc:date>
+    <dc:date>2026-11-16T22:57:07.065961</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.11.2, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M -0 210.080703 
+L 500.087656 210.080703 
+L 500.087656 0 
+L -0 0 
+L -0 210.080703 
+z
+" style="fill: none"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 102.287656 173.52 
+L 492.887656 173.52 
+L 492.887656 7.2 
+L 102.287656 7.2 
+L 102.287656 173.52 
+z
+" style="fill: none"/>
+   </g>
+   <g id="matplotlib.axis_1">
+    <g id="xtick_1">
+     <g id="line2d_1">
+      <path d="M 102.287656 173.52 
+L 102.287656 7.2 
+" clip-path="url(#p59da17556c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_2">
+      <defs>
+       <path id="mb04f04e49b" d="M 0 0 
+L 0 3.5 
+" style="stroke: #6f6f6c; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#mb04f04e49b" x="102.287656" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_1">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="102.287656" y="187.357891" transform="rotate(-0 102.287656 187.357891)">0</text>
+     </g>
+    </g>
+    <g id="xtick_2">
+     <g id="line2d_3">
+      <path d="M 163.318906 173.52 
+L 163.318906 7.2 
+" clip-path="url(#p59da17556c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_4">
+      <g>
+       <use xlink:href="#mb04f04e49b" x="163.318906" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_2">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="163.318906" y="187.357891" transform="rotate(-0 163.318906 187.357891)">1</text>
+     </g>
+    </g>
+    <g id="xtick_3">
+     <g id="line2d_5">
+      <path d="M 224.350156 173.52 
+L 224.350156 7.2 
+" clip-path="url(#p59da17556c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_6">
+      <g>
+       <use xlink:href="#mb04f04e49b" x="224.350156" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_3">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="224.350156" y="187.357891" transform="rotate(-0 224.350156 187.357891)">2</text>
+     </g>
+    </g>
+    <g id="xtick_4">
+     <g id="line2d_7">
+      <path d="M 285.381406 173.52 
+L 285.381406 7.2 
+" clip-path="url(#p59da17556c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_8">
+      <g>
+       <use xlink:href="#mb04f04e49b" x="285.381406" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_4">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="285.381406" y="187.357891" transform="rotate(-0 285.381406 187.357891)">3</text>
+     </g>
+    </g>
+    <g id="xtick_5">
+     <g id="line2d_9">
+      <path d="M 346.412656 173.52 
+L 346.412656 7.2 
+" clip-path="url(#p59da17556c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_10">
+      <g>
+       <use xlink:href="#mb04f04e49b" x="346.412656" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_5">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="346.412656" y="187.357891" transform="rotate(-0 346.412656 187.357891)">4</text>
+     </g>
+    </g>
+    <g id="xtick_6">
+     <g id="line2d_11">
+      <path d="M 407.443906 173.52 
+L 407.443906 7.2 
+" clip-path="url(#p59da17556c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_12">
+      <g>
+       <use xlink:href="#mb04f04e49b" x="407.443906" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_6">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="407.443906" y="187.357891" transform="rotate(-0 407.443906 187.357891)">5</text>
+     </g>
+    </g>
+    <g id="xtick_7">
+     <g id="line2d_13">
+      <path d="M 468.475156 173.52 
+L 468.475156 7.2 
+" clip-path="url(#p59da17556c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_14">
+      <g>
+       <use xlink:href="#mb04f04e49b" x="468.475156" y="173.52" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_7">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #6f6f6c" x="468.475156" y="187.357891" transform="rotate(-0 468.475156 187.357891)">6</text>
+     </g>
+    </g>
+    <g id="text_8">
+     <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #4a4a48" x="297.587656" y="200.718594" transform="rotate(-0 297.587656 200.718594)">Latência média host em ms (mediana de 3 rodadas; menor é melhor)</text>
+    </g>
+   </g>
+   <g id="matplotlib.axis_2">
+    <g id="ytick_1">
+     <g id="line2d_15"/>
+     <g id="text_9">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="98.787656" y="26.278945" transform="rotate(-0 98.787656 26.278945)">Eager 640×640</text>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_16"/>
+     <g id="text_10">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="98.787656" y="53.459297" transform="rotate(-0 98.787656 53.459297)">A-b1: nível 3</text>
+     </g>
+    </g>
+    <g id="ytick_3">
+     <g id="line2d_17"/>
+     <g id="text_11">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="98.787656" y="80.459297" transform="rotate(-0 98.787656 80.459297)">B-b1: nível 5</text>
+     </g>
+    </g>
+    <g id="ytick_4">
+     <g id="line2d_18"/>
+     <g id="text_12">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="98.787656" y="107.459297" transform="rotate(-0 98.787656 107.459297)">C: nível 5 + grafo</text>
+     </g>
+    </g>
+    <g id="ytick_5">
+     <g id="line2d_19"/>
+     <g id="text_13">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="98.787656" y="134.278945" transform="rotate(-0 98.787656 134.278945)">Eager 640×384</text>
+     </g>
+    </g>
+    <g id="ytick_6">
+     <g id="line2d_20"/>
+     <g id="text_14">
+      <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #4a4a48" x="98.787656" y="161.279297" transform="rotate(-0 98.787656 161.279297)">D: 640×384 + grafo</text>
+     </g>
+    </g>
+   </g>
+   <g id="patch_3">
+    <path d="M 102.287656 173.52 
+L 492.887656 173.52 
+" style="fill: none; stroke: #e4e4e1; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 102.287656 14.76 
+L 444.672969 14.76 
+L 444.672969 30.96 
+L 102.287656 30.96 
+z
+" clip-path="url(#p59da17556c)" style="fill: #2a78d6"/>
+   </g>
+   <g id="text_15">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="449.555469" y="25.068008" transform="rotate(-0 449.555469 25.068008)">5,61</text>
+   </g>
+   <g id="patch_5">
+    <path d="M 102.287656 41.76 
+L 284.160781 41.76 
+L 284.160781 57.96 
+L 102.287656 57.96 
+z
+" clip-path="url(#p59da17556c)" style="fill: #1baf7a"/>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="289.043281" y="52.068008" transform="rotate(-0 289.043281 52.068008)">2,98</text>
+   </g>
+   <g id="patch_6">
+    <path d="M 102.287656 68.76 
+L 281.719531 68.76 
+L 281.719531 84.96 
+L 102.287656 84.96 
+z
+" clip-path="url(#p59da17556c)" style="fill: #1baf7a"/>
+   </g>
+   <g id="text_17">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="286.602031" y="79.068008" transform="rotate(-0 286.602031 79.068008)">2,94</text>
+   </g>
+   <g id="patch_7">
+    <path d="M 102.287656 95.76 
+L 271.954531 95.76 
+L 271.954531 111.96 
+L 102.287656 111.96 
+z
+" clip-path="url(#p59da17556c)" style="fill: #1baf7a"/>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="276.837031" y="106.068008" transform="rotate(-0 276.837031 106.068008)">2,78</text>
+   </g>
+   <g id="patch_8">
+    <path d="M 102.287656 122.76 
+L 322.610469 122.76 
+L 322.610469 138.96 
+L 102.287656 138.96 
+z
+" clip-path="url(#p59da17556c)" style="fill: #2a78d6"/>
+   </g>
+   <g id="text_19">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="327.492969" y="133.068008" transform="rotate(-0 327.492969 133.068008)">3,61</text>
+   </g>
+   <g id="patch_9">
+    <path d="M 102.287656 149.76 
+L 205.430469 149.76 
+L 205.430469 165.96 
+L 102.287656 165.96 
+z
+" clip-path="url(#p59da17556c)" style="fill: #1baf7a"/>
+   </g>
+   <g id="text_20">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="210.312969" y="160.068008" transform="rotate(-0 210.312969 160.068008)">1,69</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p59da17556c">
+   <rect x="102.287656" y="7.2" width="390.6" height="166.32"/>
+  </clipPath>
+ </defs>
+</svg>
+</div><div class="table-wrap "><table><thead><tr><th>Variante</th><th class="num">Host média</th><th class="num">GPU média</th><th class="num">vs A-b1</th><th class="num">vs eager mesmo tamanho</th></tr></thead><tbody><tr><td>Eager 640×640</td><td class="num">5,61 ms</td><td class="num">—</td><td class="num">0,53×</td><td class="num">1,00×</td></tr><tr><td>Eager 640×384</td><td class="num">3,61 ms</td><td class="num">—</td><td class="num">0,83×</td><td class="num">1,00×</td></tr><tr><td>A: nível 3, b1 / b2</td><td class="num">2,98 / 2,97 ms</td><td class="num">2,96 / 2,96 ms</td><td class="num">1,00× / 1,00×</td><td class="num">1,88× / 1,89×</td></tr><tr><td>B: nível 5, b1 / b2</td><td class="num">2,94 / 2,92 ms</td><td class="num">2,91 / 2,91 ms</td><td class="num">1,01× / 1,02×</td><td class="num">1,91× / 1,92×</td></tr><tr><td>C: B-b1 + CUDA Graph</td><td class="num">2,78 ms</td><td class="num">2,72 ms</td><td class="num">1,07×</td><td class="num">2,02×</td></tr><tr><td>D: 640×384 + CUDA Graph</td><td class="num">1,69 ms</td><td class="num">1,63 ms</td><td class="num">1,76×</td><td class="num">2,14×</td></tr></tbody></table></div><p>O nível 5 não teve ganho mensurável frente ao ruído de ±3%, apesar de build cerca de 3,3× mais longo. O grafo reduz o host de 2,94 para 2,78 ms; eventos CUDA medem do primeiro ao último trabalho na GPU e, sem grafo, incluem intervalos em que o dispositivo espera lançamentos da CPU. O timing do <code>trtexec</code> com grafo no nível 3 foi 2,74 ms de GPU, próximo dos 2,72 ms de C. D muda a carga: 1,64× em relação a C; a razão GPU 1,63/2,72 = 0,60 coincide com a razão de pixels nesta medição, sem estabelecer uma lei geral. A soma do perfil por camada cai de 3,20 para 2,08 ms (0,65×), com overhead de sincronização; o TopK custa 0,060 ms nos dois formatos.</p>
+<p>Todos os engines passaram 8/8 contra eager no mesmo formato. Na comparação entre formatos em sete imagens 16:9, zidane falhou por diferença de score e três quadros de webcam por contagem: detecções de baixa confiança junto à borda inferior caíram abaixo de 0,25. A queda também aparece no eager; diferenças de pré-processamento C++ e Python afetam scores limítrofes. O critério não foi afrouxado; detalhes em <code>docs/tensorrt-fp16-tuning-results.md</code>.</p><h2>12. Comparação geral</h2><div class="figure"><svg xmlns:xlink="http://www.w3.org/1999/xlink" width="439.145pt" height="226.712703pt" viewBox="0 0 439.145 226.712703" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-11-16T22:57:06.959367</dc:date>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -851,16 +1125,16 @@ z
      <g id="line2d_1">
       <path d="M 32.755625 190.152 
 L 32.755625 7.2 
-" clip-path="url(#p31ef512e9c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p11c4b88842)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_2">
       <defs>
-       <path id="m711577e0cc" d="M 0 0 
+       <path id="m35e6c6e4de" d="M 0 0 
 L 0 3.5 
 " style="stroke: #6f6f6c; stroke-width: 0.8"/>
       </defs>
       <g>
-       <use xlink:href="#m711577e0cc" x="32.755625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m35e6c6e4de" x="32.755625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_1">
@@ -871,11 +1145,11 @@ L 0 3.5
      <g id="line2d_3">
       <path d="M 81.580625 190.152 
 L 81.580625 7.2 
-" clip-path="url(#p31ef512e9c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p11c4b88842)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_4">
       <g>
-       <use xlink:href="#m711577e0cc" x="81.580625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m35e6c6e4de" x="81.580625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_2">
@@ -886,11 +1160,11 @@ L 81.580625 7.2
      <g id="line2d_5">
       <path d="M 130.405625 190.152 
 L 130.405625 7.2 
-" clip-path="url(#p31ef512e9c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p11c4b88842)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_6">
       <g>
-       <use xlink:href="#m711577e0cc" x="130.405625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m35e6c6e4de" x="130.405625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_3">
@@ -901,11 +1175,11 @@ L 130.405625 7.2
      <g id="line2d_7">
       <path d="M 179.230625 190.152 
 L 179.230625 7.2 
-" clip-path="url(#p31ef512e9c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p11c4b88842)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_8">
       <g>
-       <use xlink:href="#m711577e0cc" x="179.230625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m35e6c6e4de" x="179.230625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_4">
@@ -916,11 +1190,11 @@ L 179.230625 7.2
      <g id="line2d_9">
       <path d="M 228.055625 190.152 
 L 228.055625 7.2 
-" clip-path="url(#p31ef512e9c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p11c4b88842)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_10">
       <g>
-       <use xlink:href="#m711577e0cc" x="228.055625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m35e6c6e4de" x="228.055625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_5">
@@ -931,11 +1205,11 @@ L 228.055625 7.2
      <g id="line2d_11">
       <path d="M 276.880625 190.152 
 L 276.880625 7.2 
-" clip-path="url(#p31ef512e9c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p11c4b88842)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_12">
       <g>
-       <use xlink:href="#m711577e0cc" x="276.880625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m35e6c6e4de" x="276.880625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_6">
@@ -946,11 +1220,11 @@ L 276.880625 7.2
      <g id="line2d_13">
       <path d="M 325.705625 190.152 
 L 325.705625 7.2 
-" clip-path="url(#p31ef512e9c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p11c4b88842)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_14">
       <g>
-       <use xlink:href="#m711577e0cc" x="325.705625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m35e6c6e4de" x="325.705625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_7">
@@ -961,11 +1235,11 @@ L 325.705625 7.2
      <g id="line2d_15">
       <path d="M 374.530625 190.152 
 L 374.530625 7.2 
-" clip-path="url(#p31ef512e9c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p11c4b88842)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_16">
       <g>
-       <use xlink:href="#m711577e0cc" x="374.530625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m35e6c6e4de" x="374.530625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_8">
@@ -976,11 +1250,11 @@ L 374.530625 7.2
      <g id="line2d_17">
       <path d="M 423.355625 190.152 
 L 423.355625 7.2 
-" clip-path="url(#p31ef512e9c)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
+" clip-path="url(#p11c4b88842)" style="fill: none; stroke: #e4e4e1; stroke-width: 0.7; stroke-linecap: square"/>
      </g>
      <g id="line2d_18">
       <g>
-       <use xlink:href="#m711577e0cc" x="423.355625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
+       <use xlink:href="#m35e6c6e4de" x="423.355625" y="190.152" style="fill: #6f6f6c; stroke: #6f6f6c; stroke-width: 0.8"/>
       </g>
      </g>
      <g id="text_9">
@@ -1016,7 +1290,7 @@ L 130.405625 15.516
 L 130.405625 32.879077 
 L 32.755625 32.879077 
 z
-" clip-path="url(#p31ef512e9c)" style="fill: #2a78d6"/>
+" clip-path="url(#p11c4b88842)" style="fill: #2a78d6"/>
    </g>
    <g id="text_13">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="134.311625" y="26.405546" transform="rotate(-0 134.311625 26.405546)">100</text>
@@ -1027,7 +1301,7 @@ L 147.982625 34.706769
 L 147.982625 52.069846 
 L 32.755625 52.069846 
 z
-" clip-path="url(#p31ef512e9c)" style="fill: #eb6834"/>
+" clip-path="url(#p11c4b88842)" style="fill: #eb6834"/>
    </g>
    <g id="text_14">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="151.888625" y="45.596316" transform="rotate(-0 151.888625 45.596316)">118</text>
@@ -1038,7 +1312,7 @@ L 164.583125 53.897538
 L 164.583125 71.260615 
 L 32.755625 71.260615 
 z
-" clip-path="url(#p31ef512e9c)" style="fill: #1baf7a"/>
+" clip-path="url(#p11c4b88842)" style="fill: #1baf7a"/>
    </g>
    <g id="text_15">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="168.489125" y="64.787085" transform="rotate(-0 168.489125 64.787085)">135</text>
@@ -1049,7 +1323,7 @@ L 85.486625 73.088308
 L 85.486625 90.451385 
 L 32.755625 90.451385 
 z
-" clip-path="url(#p31ef512e9c)" style="fill: #eda100"/>
+" clip-path="url(#p11c4b88842)" style="fill: #eda100"/>
    </g>
    <g id="text_16">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="89.392625" y="83.977854" transform="rotate(-0 89.392625 83.977854)">54</text>
@@ -1060,7 +1334,7 @@ L 207.549125 106.900615
 L 207.549125 124.263692 
 L 32.755625 124.263692 
 z
-" clip-path="url(#p31ef512e9c)" style="fill: #2a78d6"/>
+" clip-path="url(#p11c4b88842)" style="fill: #2a78d6"/>
    </g>
    <g id="text_17">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="211.455125" y="117.790162" transform="rotate(-0 211.455125 117.790162)">179</text>
@@ -1071,7 +1345,7 @@ L 281.763125 126.091385
 L 281.763125 143.454462 
 L 32.755625 143.454462 
 z
-" clip-path="url(#p31ef512e9c)" style="fill: #eb6834"/>
+" clip-path="url(#p11c4b88842)" style="fill: #eb6834"/>
    </g>
    <g id="text_18">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="285.669125" y="136.980931" transform="rotate(-0 285.669125 136.980931)">255</text>
@@ -1082,7 +1356,7 @@ L 364.765625 145.282154
 L 364.765625 162.645231 
 L 32.755625 162.645231 
 z
-" clip-path="url(#p31ef512e9c)" style="fill: #1baf7a"/>
+" clip-path="url(#p11c4b88842)" style="fill: #1baf7a"/>
    </g>
    <g id="text_19">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="368.671625" y="156.1717" transform="rotate(-0 368.671625 156.1717)">340</text>
@@ -1093,7 +1367,7 @@ L 133.335125 164.472923
 L 133.335125 181.836 
 L 32.755625 181.836 
 z
-" clip-path="url(#p31ef512e9c)" style="fill: #eda100"/>
+" clip-path="url(#p11c4b88842)" style="fill: #eda100"/>
    </g>
    <g id="text_20">
     <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #1f1f1e" x="137.241125" y="175.362469" transform="rotate(-0 137.241125 175.362469)">103</text>
@@ -1147,13 +1421,13 @@ z
   </g>
  </g>
  <defs>
-  <clipPath id="p31ef512e9c">
+  <clipPath id="p11c4b88842">
    <rect x="32.755625" y="7.2" width="390.6" height="182.952"/>
   </clipPath>
  </defs>
 </svg>
 </div><div class="table-wrap "><table><thead><tr><th>Dispositivo</th><th>Backend</th><th>Precisão</th><th class="num">Latência</th><th class="num">FPS</th><th>Dependências em execução</th><th>Artefato</th></tr></thead><tbody><tr><td>RTX 3050</td><td>PyTorch eager</td><td>FP32 / FP16</td><td class="num">10,02 / 5,59 ms</td><td class="num">100 / 179</td><td>Python, PyTorch, CUDA 12.8</td><td>.pt 15,9 MiB</td></tr><tr><td>RTX 3050</td><td>AOTInductor</td><td>FP32 / FP16</td><td class="num">8,46 / 3,92 ms</td><td class="num">118 / 255</td><td>libtorch, CUDA 12.8; sem Python</td><td>.pt2 29,8 / 16,0 MiB</td></tr><tr><td>RTX 3050</td><td><b>TensorRT</b></td><td>FP32 / FP16</td><td class="num"><b>7,39 / 2,94 ms</b></td><td class="num"><b>135 / 340</b></td><td>libnvinfer, CUDA 13.4</td><td>.plan 108,5 / 81,6 MiB</td></tr><tr><td>RTX 3050</td><td>ncnn Vulkan</td><td>FP32 / FP16</td><td class="num">18,55 / 9,69 ms</td><td class="num">54 / 103</td><td>libncnn, loader Vulkan</td><td>27,8 MiB</td></tr><tr><td>CPU</td><td>ONNX Runtime</td><td>FP32</td><td class="num">43,63 ms</td><td class="num">22,9</td><td>libonnxruntime</td><td>.onnx 28,4 MiB</td></tr><tr><td>CPU</td><td>OpenVINO</td><td>FP32 / INT8</td><td class="num">40,20 / <b>14,91 ms</b></td><td class="num">24,9 / <b>67,1</b></td><td>runtime OpenVINO</td><td>IR 28,0 / 7,7 MiB</td></tr><tr><td>CPU</td><td>ncnn</td><td>FP32</td><td class="num">56,89 ms</td><td class="num">17,6</td><td>libncnn</td><td>27,8 MiB</td></tr><tr><td>CPU</td><td><b>Engine próprio</b></td><td>FP32 / INT8</td><td class="num">46,67 / 20,94 ms *</td><td class="num">21,4 / 47,8</td><td>só libc/libstdc++/libm</td><td>executável único</td></tr><tr><td>GPU integrada</td><td>ncnn Vulkan</td><td>FP32 / FP16</td><td class="num">~433 / ~230 ms</td><td class="num">2,3 / 4,4</td><td>libncnn, loader Vulkan</td><td>27,8 MiB</td></tr></tbody></table></div><p class="small">As linhas de eager, AOTInductor e TensorRT vêm de uma mesma sessão sem pausas (variação esperada de cerca de 3%); as de CPU e ncnn são medianas com controle térmico. * Engine próprio: medianas com controle térmico, mas com carga externa no host; nas mesmas sessões o OpenVINO fez 43,71 ms (FP32) e 17,01 ms (INT8). Comparações entre sessões são aproximadas. O executável do engine traz os pesos FP32 (original para a referência e pré-empacotada) e os INT8.</p><h3>Validação consolidada</h3><div class="table-wrap "><table><thead><tr><th>Artefato</th><th>PASS</th><th>Observação</th></tr></thead><tbody><tr><td>AOTInductor FP32 / FP16</td><td>8/8 · 8/8</td><td>maior diferença FP32: 0,035 px, score 0,0006</td></tr><tr><td>TensorRT FP32 padrão</td><td><span class='warn'>7/8</span></td><td>TF32: score 0,0019–0,0022 numa imagem (limite 0,001)</td></tr><tr><td>TensorRT FP32 sem TF32 / FP16</td><td>8/8 · 8/8</td><td>sem TF32: 3e-5 px, praticamente bit a bit</td></tr><tr><td>CPU: eager, ONNX Runtime, OpenVINO FP32 (2 configurações)</td><td>32/32</td><td>tolerâncias estritas</td></tr><tr><td>OpenVINO INT8</td><td>8/8</td><td>critério INT8; mAP −0,31 ponto</td></tr><tr><td>ncnn RTX 3050 FP32 / FP16</td><td>8/8 · 8/8</td><td>pós-processamento em C++ bit a bit</td></tr><tr><td>ncnn Intel FP32 / FP16</td><td>8/8 · <span class='warn'>6/8</span></td><td>FP16: score 0,0051 e 0,0093 (limite 0,005)</td></tr><tr><td>ncnn CPU FP32</td><td>8/8</td><td></td></tr><tr><td>Engine próprio: referência 1 thread / otimizado 1 e 6 threads</td><td>8/8 · 8/8 · 8/8</td><td>tolerâncias estritas; maior diferença 0,00003 px, score 0,000001</td></tr><tr><td>Engine próprio INT8</td><td>8/8</td><td>critério INT8; mAP −0,26 ponto</td></tr><tr><td><b>Total</b></td><td><b>149/152</b></td><td>o <code>detect</code> com pré-processamento em C++ passou em todos os artefatos</td></tr></tbody></table></div>
-<h2>12. Problemas e lições</h2>
+<h2>13. Problemas e lições</h2>
 <ul>
 <li><b>Configuração assimétrica distorce comparações.</b> O TF32 ligado de um lado e desligado do outro inflou o ganho do AOTInductor de 1,18× para 1,29×. Toda medição passou a imprimir a configuração usada.</li>
 <li><b>A temperatura do notebook é uma variável.</b> Medições em sequência penalizaram quem rodou por último em até 25%. Resfriamento, ordem trocada e mediana resolveram.</li>
@@ -1164,12 +1438,12 @@ z
 <li><b>Exportação não é trivial:</b> o head end2end precisa ser ligado antes da fusão; o ncnn não tem TopK; o TensorRT 11 só aceita FP16 vindo do próprio ONNX.</li>
 </ul>
 
-<h2>13. Conclusão</h2>
+<h2>14. Conclusão</h2>
 <h3>Respostas às perguntas</h3>
 <ul>
 <li><b>Viabilidade: sim.</b> A YOLOv10s exportou e compilou em todos os caminhos sem operações customizadas (no ncnn, com o TopK em C++). As saídas ficaram dentro das tolerâncias, com duas exceções de causa conhecida: o TF32 do TensorRT e o FP16 na GPU integrada.</li>
 <li><b>Dependências: dependem do backend.</b> O AOTInductor elimina o Python, mas não a libtorch. O TensorRT deixa só <code>libnvinfer</code> e o runtime CUDA. O ncnn deixa só a própria biblioteca e o loader Vulkan, e roda em qualquer GPU. Em todos os casos os pesos ficam embutidos no artefato.</li>
-<li><b>Ganho: real e maior em precisão reduzida.</b> Na GPU NVIDIA, o TensorRT FP16 dá 1,90× sobre o eager. Na CPU, o OpenVINO INT8 dá 3,73× sobre o eager e 2,70× sobre o OpenVINO FP32, perdendo só 0,31 ponto de mAP. Já o Vulkan na NVIDIA ficou abaixo do eager (0,58× em FP16).</li>
+<li><b>Ganho: real e maior em precisão reduzida.</b> Na GPU NVIDIA, o TensorRT FP16 dá 1,90× sobre o eager. Na CPU, o OpenVINO INT8 dá 3,73× sobre o eager e 2,70× sobre o OpenVINO FP32, perdendo só 0,31 ponto de mAP. Já o Vulkan na NVIDIA ficou abaixo do eager (0,58× em FP16). TensorRT FP16 com CUDA Graph chegou a 2,78 ms, 2,02× sobre eager; com entrada webcam 640×384, 1,69 ms.</li>
 </ul>
 <h3>O que usar em cada alvo</h3>
 <ul>
@@ -1181,13 +1455,13 @@ z
 <p>Para a integração com a Enty (PBI-096), o resultado sugere um backend em torno de um formato intermediário (ONNX) e de um runtime nativo trocável por alvo, já que o melhor caminho muda conforme o hardware.</p>
 <h3>Limitações</h3>
 <ul>
-<li>Uma única máquina, sem clock travado. Só batch 1 e entrada estática 640×640.</li>
+<li>Uma única máquina, sem clock travado. Só batch 1 e entradas estáticas (640×640 e 640×384 na seção 11).</li>
 <li>As 8 imagens de validação conferem equivalência numérica, não acurácia; a acurácia (mAP) só foi medida na comparação INT8 da CPU.</li>
 <li>Os artefatos do TensorRT e do AOTInductor são específicos da arquitetura da GPU (e, no TensorRT, da versão).</li>
 </ul>
 <h3>Próximo passo</h3>
 <p>O engine próprio mostrou que um artefato sem nenhuma dependência chega a ~93% da velocidade do OpenVINO em FP32 e a ~81% em INT8, com acurácia INT8 melhor. Para fechar a distância no INT8, o próximo passo é manter as ativações em u8 entre convoluções consecutivas, quantizando no epílogo de quem produz em vez de no empacotamento de quem consome. Esse caminho, um gerador que transforma o grafo em código nativo especializado, é o que mais se aproxima do que a Enty precisa.</p>
-<h2>14. Apêndice: versões e reprodução</h2><div class="table-wrap "><table><thead><tr><th>Componente</th><th>Versão</th></tr></thead><tbody><tr><td>PyTorch / Ultralytics</td><td>2.11.0+cu128 / 8.4.210</td></tr><tr><td>TensorRT / cuDNN (sistema)</td><td>11.4.0.106 / 9.28.1</td></tr><tr><td>ONNX / ONNX Runtime / onnxscript</td><td>1.23.2 / 1.31.1 / 0.7.2</td></tr><tr><td>OpenVINO / NNCF / pycocotools</td><td>2026.4.1 / 3.4.0 / 2.0.11</td></tr><tr><td>ncnn / pnnx</td><td>20261020 / 20261020</td></tr><tr><td>Driver NVIDIA / Mesa</td><td>620.70 / 26.2.6</td></tr><tr><td>CUDA</td><td>13.4 (sistema, TensorRT) e 12.8 (wheels, PyTorch e AOTInductor)</td></tr><tr><td>Compiladores e ferramentas</td><td>GCC 16.2.1, CMake 4.4, Ninja 1.13, Python 3.12, uv 0.11</td></tr></tbody></table></div>
+<h2>15. Apêndice: versões e reprodução</h2><div class="table-wrap "><table><thead><tr><th>Componente</th><th>Versão</th></tr></thead><tbody><tr><td>PyTorch / Ultralytics</td><td>2.11.0+cu128 / 8.4.210</td></tr><tr><td>TensorRT / cuDNN (sistema)</td><td>11.4.0.106 / 9.28.1</td></tr><tr><td>ONNX / ONNX Runtime / onnxscript</td><td>1.23.2 / 1.31.1 / 0.7.2</td></tr><tr><td>OpenVINO / NNCF / pycocotools</td><td>2026.4.1 / 3.4.0 / 2.0.11</td></tr><tr><td>ncnn / pnnx</td><td>20261020 / 20261020</td></tr><tr><td>Driver NVIDIA / Mesa</td><td>620.70 / 26.2.6</td></tr><tr><td>CUDA</td><td>13.4 (sistema, TensorRT) e 12.8 (wheels, PyTorch e AOTInductor)</td></tr><tr><td>Compiladores e ferramentas</td><td>GCC 16.2.1, CMake 4.4, Ninja 1.13, Python 3.12, uv 0.11</td></tr></tbody></table></div>
 <h3>Como reproduzir</h3>
 <p>Todos os comandos rodam na raiz do repositório e os arquivos gerados vão para <code>artifacts/</code>. O passo a passo completo, com saídas esperadas e solução de problemas, está no <code>README.md</code> e em <code>docs/REPRODUCE.md</code> (em inglês).</p>
 <ol>
@@ -1197,7 +1471,7 @@ z
 <li><b>Artefatos de cada backend:</b> exportação ONNX e engines TensorRT; IR do OpenVINO e INT8 com NNCF; conversão ncnn; ONNX bruto, calibração e geração do engine próprio.</li>
 <li><b>Compilação de todo o C++:</b> <code>cmake --preset release</code> e <code>cmake --build --preset release</code>. O CMake compila cada runner cujas dependências encontra, coloca os binários em <code>build/bin/</code> e informa o que pulou e por quê. <code>ctest --preset release</code> roda os testes do engine.</li>
 <li><b>Validação:</b> o comando <code>validate</code> de cada runner compara as 8 imagens com a referência; <code>engine/validate_int8.py</code> e <code>cpu/validate.py</code> fazem o mesmo para o INT8 e para a CPU. O mAP vem de <code>cpu/eval_map.py</code> e <code>engine/eval_map.py</code>.</li>
-<li><b>Benchmarks:</b> os scripts em <code>scripts/</code> (<code>bench_all</code>, <code>bench_cpu</code>, <code>bench_ncnn</code> e <code>bench_engine</code>) aplicam o protocolo térmico e gravam os resumos em <code>artifacts/</code>.</li>
+<li><b>Benchmarks:</b> os scripts em <code>scripts/</code> (<code>bench_all</code>, <code>bench_cpu</code>, <code>bench_ncnn</code>, <code>bench_engine</code> e <code>bench_trt_tuning</code>) aplicam o protocolo térmico e gravam os resumos em <code>artifacts/</code>.</li>
 <li><b>Este relatório:</b> <code>docs/report/build_report.py</code> gera o HTML e o PDF a partir da mesma fonte.</li>
 </ol>
-<p>Os relatórios técnicos de cada rodada estão em <code>docs/aoti-results.md</code>, <code>docs/tensorrt-results.md</code>, <code>docs/cpu-results.md</code>, <code>docs/ncnn-vulkan-results.md</code>, <code>docs/engine-results.md</code> e <code>docs/engine-int8-results.md</code>.</p></body></html>
+<p>Os relatórios técnicos de cada rodada estão em <code>docs/aoti-results.md</code>, <code>docs/tensorrt-results.md</code>, <code>docs/tensorrt-fp16-tuning-results.md</code>, <code>docs/cpu-results.md</code>, <code>docs/ncnn-vulkan-results.md</code>, <code>docs/engine-results.md</code> e <code>docs/engine-int8-results.md</code>.</p></body></html>
