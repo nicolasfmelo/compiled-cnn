@@ -43,7 +43,9 @@ Steps, all in the same run, one commit each:
 
 ## Between rounds (me)
 
-Verify and integrate round 1, then run `bash scripts/bench_trt_tuning.sh` (3 rounds) and `bash trt/profile_tuned.sh` myself on an idle GPU.
+Verify and integrate round 1. Then, on an idle GPU in the main checkout: rebuild the plans with `bash trt/build_tuned.sh` (the executor's builds ran under `nice` with other load, which can change tactic timing and build seconds), validate them again, run `bash scripts/bench_trt_tuning.sh` (3 rounds) and `bash trt/profile_tuned.sh`.
+
+GPU time from CUDA events is labeled in the report as "first-to-last device time": with plain `enqueueV3` it includes the idle gaps while the CPU is still launching, so the difference between B and C shows the launch cost. Pure kernel time comes from the summed per-layer profile.
 
 ## Round 2 (one delegation, `fast-executor`): `trt-tuning-docs`
 
